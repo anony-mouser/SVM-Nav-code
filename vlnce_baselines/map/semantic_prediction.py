@@ -47,6 +47,8 @@ class GroundedSAM(Segment):
             )
         sam = sam_model_registry[SAM_ENCODER_VERSION](checkpoint=SAM_CHECKPOINT_PATH).to(device=device)
         self.sam_predictor = SamPredictor(sam)
+        self.box_threshold = config.MAP.BOX_THRESHOLD
+        self.text_threshold = config.MAP.TEXT_THRESHOLD
         
     def _segment(self, sam_predictor: SamPredictor, image: np.ndarray, xyxy: np.ndarray) -> np.ndarray:
         sam_predictor.set_image(image)
@@ -62,8 +64,6 @@ class GroundedSAM(Segment):
     
     def segment(self, image: VisualObservation, **kwargs) -> Tuple[np.ndarray, List[str], np.ndarray]:
         classes = kwargs.get("classes", [])
-        box_threshold = kwargs.get("box_threshold", 0.35)
-        text_threshold = kwargs.get("text_threshold", 0.25)
         box_annotator = sv.BoxAnnotator()
         mask_annotator = sv.MaskAnnotator()
         labels = []
@@ -71,8 +71,8 @@ class GroundedSAM(Segment):
         detections = self.grounding_dino_model.predict_with_classes(
             image=image,
             classes=classes,
-            box_threshold=box_threshold,
-            text_threshold=text_threshold
+            box_threshold=self.box_threshold,
+            text_threshold=self.text_threshold
         )
         detections.mask = self._segment(
             sam_predictor=self.sam_predictor,
@@ -90,7 +90,9 @@ class GroundedSAM(Segment):
         annotated_image = mask_annotator.annotate(scene=image.copy(), detections=detections)
         annotated_image = box_annotator.annotate(scene=annotated_image, detections=detections, labels=labels)
         
-        return (detections.mask, labels, annotated_image)
+        # detectins.mask.shape=[num_detected_classes, h, w]
+        # attention: sometimes the model can't detect all classes, so num_detected_classes <= len(classes)
+        return (detections.mask.astype(np.float32), labels, annotated_image)
     
 
 class BatchWrapper:

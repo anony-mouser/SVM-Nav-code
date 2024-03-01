@@ -66,6 +66,7 @@ def run_exp(exp_name: str, exp_config: str,
     config.LOG_FILE = exp_name + '_' + config.LOG_FILE
     config.local_rank = local_rank
     config.freeze()
+    # import pdb;pdb.set_trace()
     
     os.makedirs(config.EVAL_CKPT_PATH_DIR, exist_ok=True)
     os.system("mkdir -p data/logs/running_log")
@@ -79,11 +80,11 @@ def run_exp(exp_name: str, exp_config: str,
     
     if torch.cuda.is_available():
         torch.set_num_threads(1)
-        
+    
+
     trainer_init = baseline_registry.get_trainer(config.TRAINER_NAME)
     assert trainer_init is not None, f"{config.TRAINER_NAME} is not supported"
     trainer = trainer_init(config)
-    # import pdb;pdb.set_trace()
     trainer.eval()
     
 

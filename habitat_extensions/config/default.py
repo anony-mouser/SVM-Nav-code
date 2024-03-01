@@ -16,7 +16,7 @@ _C.defrost()
 # ----------------------------------------------------------------------------
 _C.TASK.NDTW = CN()
 _C.TASK.NDTW.TYPE = "NDTW"
-_C.TASK.NDTW.SPLIT = "val_seen"
+_C.TASK.NDTW.SPLIT = "val_unseen"
 _C.TASK.NDTW.FDTW = True  # False: DTW
 _C.TASK.NDTW.GT_PATH = (
     "data/datasets/R2R_VLNCE_v1-2_preprocessed/{split}/{split}_gt.json"

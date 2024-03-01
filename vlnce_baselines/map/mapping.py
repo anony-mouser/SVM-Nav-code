@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-import utils.depth_utils as du
-from utils.map_utils import get_grid, ChannelPool
+import vlnce_baselines.utils.depth_utils as du
+from vlnce_baselines.utils.map_utils import get_grid, ChannelPool
 
 
 class Semantic_Mapping(nn.Module):
@@ -17,28 +17,28 @@ class Semantic_Mapping(nn.Module):
     def __init__(self, args):
         super(Semantic_Mapping, self).__init__()
 
-        self.device = args.device
-        self.screen_h = args.frame_height
-        self.screen_w = args.frame_width
-        self.resolution = args.map_resolution
-        self.z_resolution = args.map_resolution
-        self.map_size_cm = args.map_size_cm // args.global_downscaling
+        self.device = args.DEVICE
+        self.screen_h = args.FRAME_HEIGHT
+        self.screen_w = args.FRAME_WIDTH
+        self.resolution = args.MAP_RESOLUTION
+        self.z_resolution = args.MAP_RESOLUTION
+        self.map_size_cm = args.MAP_SIZE_CM // args.GLOBAL_DOWNSCALING
         self.n_channels = 3
-        self.vision_range = args.vision_range # args.vision_range=100(cm)
+        self.vision_range = args.VISION_RANGE # args.vision_range=100(cm)
         self.dropout = 0.5
-        self.fov = args.hfov
-        self.du_scale = args.du_scale # depth unit
-        self.cat_pred_threshold = args.cat_pred_threshold
-        self.exp_pred_threshold = args.exp_pred_threshold
-        self.map_pred_threshold = args.map_pred_threshold
-        self.num_sem_categories = args.num_sem_categories
+        self.fov = args.HFOV
+        self.du_scale = args.DU_SCALE # depth unit
+        self.cat_pred_threshold = args.CAT_PRED_THRESHOLD
+        self.exp_pred_threshold = args.EXP_PRED_THRESHOLD
+        self.map_pred_threshold = args.MAP_PRED_THRESHOLD
+        self.max_sem_categories = args.MAX_SEM_CATEGORIES # presuppose max sem categories since we are handling the open-vocabulary problem
 
         # 72; 3.6m is about the height of one floor
         self.max_height = int(360 / self.z_resolution)
         
         # -8; we can use negative height to ensure information on the floor is contained
         self.min_height = int(-40 / self.z_resolution)
-        self.agent_height = args.camera_height * 100. # 0.88 * 100 = 88cm
+        self.agent_height = args.AGENT_HEIGHT * 100. # 0.88 * 100 = 88cm
         self.shift_loc = [self.vision_range *
                           self.resolution // 2, 0, np.pi / 2.0] # [250, 0, pi/2]
         self.camera_matrix = du.get_camera_matrix(
@@ -52,17 +52,25 @@ class Semantic_Mapping(nn.Module):
         # and feat[...,0,...] are initialized as all ones.
         # feat is predicted by mask-rcnn, which has only 1 or 0
         self.init_grid = torch.zeros(
-            args.num_processes, 1 + self.num_sem_categories, vr, vr,
+            args.NUM_ENVIRONMENTS, 1 + self.max_sem_categories, vr, vr,
             self.max_height - self.min_height
         ).float().to(self.device)
         self.feat = torch.ones(
-            args.num_processes, 1 + self.num_sem_categories,
+            args.NUM_ENVIRONMENTS, 1 + self.max_sem_categories,
             self.screen_h // self.du_scale * self.screen_w // self.du_scale
         ).float().to(self.device)
 
     def forward(self, obs, pose_obs, maps_last, poses_last):
-        bs, c, h, w = obs.size() # (c, h, w), c = 3(RGB) + 1(Depth) + 16(CoCo categories) = 20; h = 120; w = 160
+        # (c, h, w), c = 3(RGB) + 1(Depth) + num_detected_categories
+        # if use CoCo the number of categories is 16, but now open-vocabulary; 
+        # h = 120; w = 160
+        bs, c, h, w = obs.size()
         depth = obs[:, 3, :, :] # depth.shape = (bs, H, W)
+        
+        # cut out the needed tensor from presupposed categories dimension
+        num_detected_categories = c - 4 # 4=3(RGB) + 1(Depth)
+        self.init_grid = self.init_grid[:, :1 + num_detected_categories, :, :, :]
+        self.feat = self.feat[:, :1 + num_detected_categories, :]
 
         point_cloud_t = du.get_point_cloud_from_z_t(
             depth, self.camera_matrix, self.device, scale=self.du_scale) # shape: [bs, h, w, 3] 3 is (x, y, z) for each point in (h, w)
