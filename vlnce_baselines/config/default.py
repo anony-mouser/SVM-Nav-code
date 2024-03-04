@@ -41,6 +41,10 @@ _C.MAP.CAT_PRED_THRESHOLD = 5.0
 _C.MAP.EXP_PRED_THRESHOLD = 1.0
 _C.MAP.MAP_PRED_THRESHOLD = 1.0
 _C.MAP.MAX_SEM_CATEGORIES = 16
+_C.MAP.CENTER_RESET_STEPS = 25
+_C.MAP.VISUALIZE = True
+_C.MAP.PRINT_IMAGES = False
+_C.MAP.RESULTS_DIR = 'data/logs/eval_results/'
 
 
 # -----------------------------------------------------------------------------

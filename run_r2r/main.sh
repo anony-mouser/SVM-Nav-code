@@ -1,7 +1,7 @@
 flag=" --exp_name exp1
       --run-type eval
       --exp-config vlnce_baselines/config/exp1.yaml
-      NUM_ENVIRONMENTS 3
+      NUM_ENVIRONMENTS 1
       "
 
 # CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=1 --master_port 1234 run.py $flag

@@ -10,6 +10,11 @@ from habitat.config.default import get_config
 _C = get_config()
 _C.defrost()
 
+# -----------------------------------------------------------------------------
+# VLN ORACLE PROGRESS SENSOR
+# -----------------------------------------------------------------------------
+_C.TASK.SENSOR_POSE_SENSOR = CN()
+_C.TASK.SENSOR_POSE_SENSOR.TYPE = "SensorPoseSensor"
 
 # ----------------------------------------------------------------------------
 # NDTW MEASUREMENT
@@ -86,7 +91,7 @@ _C.TASK.TOP_DOWN_MAP_VLNCE.FOG_OF_WAR.VISIBILITY_DIST = 5.0
 # ----------------------------------------------------------------------------
 # DATASET EXTENSIONS
 # ----------------------------------------------------------------------------
-_C.DATASET.EPISODES_ALLOWED = None
+_C.DATASET.EPISODES_ALLOWED = [2]
 
 
 def get_extended_config(

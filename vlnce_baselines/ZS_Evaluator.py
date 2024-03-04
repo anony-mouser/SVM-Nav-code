@@ -1,19 +1,23 @@
 import numpy as np
 from PIL import Image
+from typing import List
+from collections import defaultdict
 
 import torch
+from torch import Tensor
 import torch.distributed as distr
 from torchvision import transforms
 
 from habitat import Config
-from habitat_baselines.utils.common import batch_obs
+from habitat.core.simulator import Observations
 from habitat_baselines.common.environments import get_env_class
 from habitat_baselines.common.base_trainer import BaseTrainer
 from habitat_baselines.common.baseline_registry import baseline_registry
 
+from vlnce_baselines.utils.data_utils import OrderedSet
+from vlnce_baselines.map.mapping import Semantic_Mapping
 from vlnce_baselines.common.env_utils import construct_envs
 from vlnce_baselines.map.semantic_prediction import GroundedSAM
-from vlnce_baselines.map.mapping import Semantic_Mapping
 
 
 @baseline_registry.register_trainer(name="ZS-Evaluator")
@@ -23,7 +27,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         self._flush_secs = 30 # for tensorboard
         self.config = config
         self.map_args = config.MAP
-        self.classes = ["sink", "kitchen counter"]
+        self.classes = ["floor", "sink", "kitchen counter"]
         self.device = (
             torch.device("cuda", self.config.TORCH_GPU_ID)
             if torch.cuda.is_available()
@@ -44,7 +48,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
     # def flush_secs(self, value: int):
     #     self._flush_secs = value
     
-    def _set_eval_config(self):
+    def _set_eval_config(self) -> None:
         print("set eval configs")
         self.config.defrost()
         self.config.MAP.DEVICE = self.config.TORCH_GPU_ID
@@ -60,7 +64,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         self.config.freeze()
         torch.cuda.set_device(self.device)
         
-    def _init_envs(self):
+    def _init_envs(self) -> None:
         print("start to initialize environments")
         # for DDP to load different data
         self.config.defrost()
@@ -72,9 +76,10 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             get_env_class(self.config.ENV_NAME),
             auto_reset_done=False
         )
+        self.detected_classes = OrderedSet()
         print("initializing environments finished!")
     
-    def _initialize_policy(self):
+    def _initialize_policy(self) -> None:
         print("start to initialize policy")
         # Semantic Segmentation
         self.segment_module = GroundedSAM(self.config)
@@ -113,12 +118,57 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         
         return state
         
-    def _get_sem_pred(self, rgb: np.ndarray):
+    def _get_sem_pred(self, rgb: np.ndarray) -> np.ndarray:
         # mask.shape=[num_detected_classes, h, w]
         # labels looks like: ["kitchen counter 0.69", "floor 0.37"]
         masks, labels, annotated_images = self.segment_module.segment(rgb, classes=self.classes)
+        self.mapping_module.rgb_vis = annotated_images
+        assert len(masks) == len(labels), \
+        f"The number of masks not equal to the number of labels!"
+        class_names = self._process_labels(labels)
+        masks = self._process_masks(masks, class_names)
         
         return masks.transpose(1, 2, 0)
+    
+    def _process_labels(self, labels: List[str]) -> List:
+        class_names = []
+        for label in labels:
+            class_name = " ".join(label.split(' ')[:-1])
+            class_names.append(class_name)
+            self.detected_classes.add(class_name)
+        
+        return class_names
+        
+    def _process_masks(self, masks: np.ndarray, labels: List[str]):
+        """Since we are now handling the open-vocabulary semantic mapping problem,
+        we need to maintain a mask tensor with dynamic channels. The idea is to combine
+        all same class tensors into one tensor, then let the "detected_classes" to 
+        record all classes without duplication. Finally we can use each class's index
+        in the detected_classes to determine as it's channel in the mask tensor.
+        The organization of mask is similar to chaplot's Sem_Exp, please refer to this link:
+        https://github.com/devendrachaplot/Object-Goal-Navigation/blob/master/agents/utils/semantic_prediction.py#L41
+        
+        Args:
+            masks (np.ndarray): shape:(c,h,w), each instance(even the same class) has one channel
+            labels (List[str]): masks' corresponding labels. len(masks) = len(labels)
+
+        Returns:
+            final_masks (np.ndarray): each mask will find their channel in self.detected_classes.
+            len(final_masks) = len(self.detected_classes)
+        """
+        same_label_indexs = defaultdict(list)
+        for idx, item in enumerate(labels):
+            same_label_indexs[item].append(idx) #dict {class name: [idx]}
+        combined_mask = np.zeros((len(same_label_indexs), *masks.shape[1:]))
+        for i, indexs in enumerate(same_label_indexs.values()):
+            combined_mask[i] = np.sum(masks[indexs, ...], axis=0)
+        
+        idx = [self.detected_classes.index(label) for label in same_label_indexs.keys()]
+        max_idx = max(idx)
+        final_masks = np.zeros((max_idx + 1, *masks.shape[1:])) # init final masks as [max_idx, h, w]
+        final_masks[idx, ...] = combined_mask
+        
+        return final_masks
     
     def _preprocess_depth(self, depth: np.ndarray, min_depth: float, max_depth: float) -> np.ndarray:
         # Preprocesses a depth map by handling missing values, removing outliers, and scaling the depth values.
@@ -133,14 +183,27 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         mask1 = depth == 0
         depth[mask1] = 100.0 # then turn all invalid pixels to vision_range(100)
         depth = min_depth * 100.0 + depth * max_depth * 100.0
+        
         return depth
     
-    def _preprocess_obs(self, obs):
+    def _preprocess_obs(self, obs: np.ndarray) -> np.ndarray:
         concated_obs = self._concat_obs(obs)
         state = self._preprocess_state(concated_obs)
         
-        return state
+        return state # (c,h,w)
     
+    def _batch_obs(self, n_obs: List[Observations]) -> Tensor:
+        n_states = [self._preprocess_obs(obs) for obs in n_obs]
+        max_channels = max([len(state) for state in n_states])
+        batch = np.stack([np.pad(state, 
+                [(0, max_channels - state.shape[0]), 
+                 (0, 0), 
+                 (0, 0)], 
+                mode='constant') 
+         for state in n_states], axis=0)
+        
+        return torch.from_numpy(batch).to(self.device)
+            
     def rollout(self):
         """
         execute a whole episode which consists of a sequence of sub-steps
@@ -149,7 +212,12 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         # self.envs.resume_all()
         # import pdb;pdb.set_trace()
         obs = self.envs.reset() #type(obs): list
-        state0 = self._preprocess_obs(obs[0])
+        batch_obs = self._batch_obs(obs)
+        
+        self.mapping_module.init_map_and_pose(num_detected_classes=len(self.detected_classes))
+        poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
+        _, local_map, _, local_pose = self.mapping_module(batch_obs, poses)
+        self.mapping_module.update_map(step=1)
         # batch = batch_obs(obs, self.device)
     
     def eval(self):
