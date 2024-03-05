@@ -3,12 +3,14 @@ from typing import Any, Union
 
 class OrderedSet:
     def __init__(self) -> None:
-        self.order = []
+        self.order = ['not_a_cat']
         self.unique_elements = set()
     
     def add(self, x: Union[int, float, str]) -> None:
         if x not in self.unique_elements:
+            self.order.remove('not_a_cat')
             self.order.append(x)
+            self.order.append('not_a_cat')
             self.unique_elements.add(x)
     
     def remove(self, x: Any) -> None:

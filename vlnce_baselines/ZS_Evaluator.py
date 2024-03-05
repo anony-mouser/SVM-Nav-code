@@ -10,8 +10,9 @@ from torchvision import transforms
 
 from habitat import Config
 from habitat.core.simulator import Observations
-from habitat_baselines.common.environments import get_env_class
 from habitat_baselines.common.base_trainer import BaseTrainer
+from habitat_baselines.common.environments import get_env_class
+from habitat.sims.habitat_simulator.actions import HabitatSimActions
 from habitat_baselines.common.baseline_registry import baseline_registry
 
 from vlnce_baselines.utils.data_utils import OrderedSet
@@ -26,6 +27,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         super().__init__()
         self._flush_secs = 30 # for tensorboard
         self.config = config
+        self.max_step = config.TASK_CONFIG.ENVIRONMENT.MAX_EPISODE_STEPS
         self.map_args = config.MAP
         self.classes = ["floor", "sink", "kitchen counter"]
         self.device = (
@@ -164,8 +166,9 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             combined_mask[i] = np.sum(masks[indexs, ...], axis=0)
         
         idx = [self.detected_classes.index(label) for label in same_label_indexs.keys()]
-        max_idx = max(idx)
-        final_masks = np.zeros((max_idx + 1, *masks.shape[1:])) # init final masks as [max_idx, h, w]
+        # max_idx = max(idx) + 1 # attention: remember to add one becaure index start from 0
+        # init final masks as [max_idx + 1, h, w]; add not_a_category channel at last
+        final_masks = np.zeros((len(self.detected_classes), *masks.shape[1:]))
         final_masks[idx, ...] = combined_mask
         
         return final_masks
@@ -203,7 +206,16 @@ class ZeroShotVlnEvaluator(BaseTrainer):
          for state in n_states], axis=0)
         
         return torch.from_numpy(batch).to(self.device)
-            
+
+    def _random_policy(self):
+        action = np.random.choice([
+            # HabitatSimActions.MOVE_FORWARD,
+            HabitatSimActions.TURN_LEFT,
+            # HabitatSimActions.TURN_RIGHT,
+        ])
+        
+        return {"action": action}
+        
     def rollout(self):
         """
         execute a whole episode which consists of a sequence of sub-steps
@@ -217,8 +229,18 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         self.mapping_module.init_map_and_pose(num_detected_classes=len(self.detected_classes))
         poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
         _, local_map, _, local_pose = self.mapping_module(batch_obs, poses)
-        self.mapping_module.update_map(step=1)
-        # batch = batch_obs(obs, self.device)
+        self.mapping_module.update_map(step=0)
+        
+        for step in range(self.max_step):
+            actions = []
+            for _ in range(self.config.NUM_ENVIRONMENTS):
+                actions.append(self._random_policy())
+            outputs = self.envs.step(actions)
+            obs, _, dones, infos = [list(x) for x in zip(*outputs)]
+            batch_obs = self._batch_obs(obs)
+            poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
+            _, local_map, _, local_pose = self.mapping_module(batch_obs, poses)
+            self.mapping_module.update_map(step)
     
     def eval(self):
         self._set_eval_config()

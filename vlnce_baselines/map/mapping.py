@@ -88,23 +88,39 @@ class Semantic_Mapping(nn.Module):
         self.camera_matrix = du.get_camera_matrix(
             self.screen_w, self.screen_h, self.fov)
 
-        # feat[:, 0, :] is prepared for obstacles;
+        # feat's first channel is prepared for obstacles;
         self.feat = torch.ones(
             args.NUM_ENVIRONMENTS, 1, self.screen_h // self.du_scale * self.screen_w // self.du_scale
         ).float().to(self.device)
     
-    def _dynamic_process(self, channels: int) -> None:
+    def _dynamic_process(self, num_detected_classes: int) -> None:
         vr = self.vision_range
         self.init_grid = torch.zeros(
-            self.args.NUM_ENVIRONMENTS, 1 + channels, vr, vr,
+            self.args.NUM_ENVIRONMENTS, 1 + num_detected_classes, vr, vr,
             self.max_height - self.min_height
         ).float().to(self.device)
-        pad = torch.ones_like(self.feat).to(self.device)
-        pads = torch.cat([pad] * (1 + channels - self.feat.shape[1]), axis=1).to(self.device)
-        self.feat = torch.cat([self.feat, pads], axis=1)
         
+        if num_detected_classes > (self.feat.shape[1] - 1):
+            pad_num = 1 + num_detected_classes - self.feat.shape[1]
+            feat_pad = torch.ones(
+                self.num_environments, 
+                pad_num, 
+                self.screen_h // self.du_scale * self.screen_w // self.du_scale
+                ).float().to(self.device)
+            self.feat = torch.cat([self.feat, feat_pad], axis=1)
+        
+        new_nc = num_detected_classes + self.MAP_CHANNELS
+        if new_nc > self.local_map.shape[1]:
+            pad_num = new_nc - self.local_map.shape[1]
+            local_map_pad = torch.zeros(self.num_environments, pad_num, self.local_w, self.local_h).float().to(self.device)
+            full_map_pad = torch.zeros(self.num_environments, pad_num, self.full_w, self.full_h).float().to(self.device)
+            self.local_map = torch.cat([self.local_map, local_map_pad], axis=1)
+            self.full_map = torch.cat([self.full_map, full_map_pad], axis=1)
+            
     def _prepare(self, nc: int) -> None:
         r"""Create empty full_map, local_map, full_pose, local_pose, origins, local map boundries
+        Args:
+        nc: num channels
         """
         
         r"""
@@ -178,7 +194,7 @@ class Semantic_Mapping(nn.Module):
         3. extract the local map from the full map
         """
         
-        nc = num_detected_classes + self.MAP_CHANNELS + 1 # plus 1 for not a category mask
+        nc = num_detected_classes + self.MAP_CHANNELS
         self._prepare(nc)
         
         self.full_map.fill_(0.)
@@ -274,18 +290,14 @@ class Semantic_Mapping(nn.Module):
         explored_map = self.local_map[id, 1, ...].cpu().numpy()
         semantic_map = self.local_map[id, 4:, ...].argmax(0).cpu().numpy()
         start_x, start_y, start_o, gx1, gx2, gy1, gy2 = self.state[id]
-        print("state: ", self.state[id])
         gx1, gx2, gy1, gy2 = int(gx1), int(gx2), int(gy1), int(gy2)
         r, c = start_y, start_x
         start = [int(r * 100.0 / self.resolution - gx1),
                  int(c * 100.0 / self.resolution - gy1)] # get agent's location in local map
         start = pu.threshold_poses(start, obstacle_map.shape)
         
-        print("last loc: ", self.last_loc[id])
-        print("curr loc: ", self.curr_loc[id])
         last_start_x, last_start_y = self.last_loc[id][0], self.last_loc[id][1]
         start_x, start_y, start_o, gx1, gx2, gy1, gy2 = self.last_state[id]
-        print("last state: ", self.last_state[id])
         gx1, gx2, gy1, gy2 = int(gx1), int(gx2), int(gy1), int(gy2)
         r, c = last_start_y, last_start_x
         last_start = [int(r * 100.0 / self.resolution - gx1),
@@ -345,7 +357,7 @@ class Semantic_Mapping(nn.Module):
         
         if self.visualize:
             cv2.imshow("Thread 1", self.vis_image)
-            cv2.waitKey()
+            cv2.waitKey(1)
 
     def forward(self, obs: np.ndarray, pose_obs):
         """
@@ -404,13 +416,14 @@ class Semantic_Mapping(nn.Module):
         # feat: average of all categories's predicted semantic features, [bs, 17, 19200]
         # XYZ_cm_std: point cloud in physical world, [bs, 3, 19200]
         # splat_feat_nd:
-        voxels = du.splat_feat_nd(self.init_grid * 0., self.feat, XYZ_cm_std).transpose(2, 3) # shape: [bs, 17, 100, 100, 80]
-
+        assert self.init_grid.shape[1] == self.feat.shape[1], "init_grid and feat should have same number of channels!"
+        # shape: [bs, num_detected_classes + 1, 100, 100, 80]
+        voxels = du.splat_feat_nd(self.init_grid * 0., self.feat, XYZ_cm_std).transpose(2, 3)
         min_z = int(25 / z_resolution - min_h) # 25 / 5 - (-8) = 13
         max_z = int((self.agent_height + 1) / z_resolution - min_h) # int((88 + 1) / 5 - (-8))= 25
 
-        agent_height_proj = voxels[..., min_z:max_z].sum(4) # shape: [bs, 17, 100, 100]
-        all_height_proj = voxels.sum(4) # shape: [bs, 17, 100, 100]
+        agent_height_proj = voxels[..., min_z:max_z].sum(4) # shape: [bs, num_detected_classes + 1, 100, 100, 80]
+        all_height_proj = voxels.sum(4) # shape: [bs, num_detected_classes + 1, 100, 100, 80]
 
         fp_map_pred = agent_height_proj[:, :1, :, :] # obstacle map
         fp_exp_pred = all_height_proj[:, :1, :, :] # explored map
