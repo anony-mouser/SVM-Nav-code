@@ -29,7 +29,9 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         self.config = config
         self.max_step = config.TASK_CONFIG.ENVIRONMENT.MAX_EPISODE_STEPS
         self.map_args = config.MAP
-        self.classes = ["floor", "sink", "kitchen counter"]
+        self.height = config.TASK_CONFIG.SIMULATOR.RGB_SENSOR.HEIGHT
+        self.width = config.TASK_CONFIG.SIMULATOR.RGB_SENSOR.WIDTH
+        self.classes = ["floor", "sink", "chair"]
         self.device = (
             torch.device("cuda", self.config.TORCH_GPU_ID)
             if torch.cuda.is_available()
@@ -158,18 +160,22 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             final_masks (np.ndarray): each mask will find their channel in self.detected_classes.
             len(final_masks) = len(self.detected_classes)
         """
-        same_label_indexs = defaultdict(list)
-        for idx, item in enumerate(labels):
-            same_label_indexs[item].append(idx) #dict {class name: [idx]}
-        combined_mask = np.zeros((len(same_label_indexs), *masks.shape[1:]))
-        for i, indexs in enumerate(same_label_indexs.values()):
-            combined_mask[i] = np.sum(masks[indexs, ...], axis=0)
-        
-        idx = [self.detected_classes.index(label) for label in same_label_indexs.keys()]
-        # max_idx = max(idx) + 1 # attention: remember to add one becaure index start from 0
-        # init final masks as [max_idx + 1, h, w]; add not_a_category channel at last
-        final_masks = np.zeros((len(self.detected_classes), *masks.shape[1:]))
-        final_masks[idx, ...] = combined_mask
+        if masks.shape != (0,):
+            same_label_indexs = defaultdict(list)
+            for idx, item in enumerate(labels):
+                same_label_indexs[item].append(idx) #dict {class name: [idx]}
+            combined_mask = np.zeros((len(same_label_indexs), *masks.shape[1:]))
+            for i, indexs in enumerate(same_label_indexs.values()):
+                combined_mask[i] = np.sum(masks[indexs, ...], axis=0)
+            
+            idx = [self.detected_classes.index(label) for label in same_label_indexs.keys()]
+            
+            # max_idx = max(idx) + 1 # attention: remember to add one becaure index start from 0
+            # init final masks as [max_idx + 1, h, w]; add not_a_category channel at last
+            final_masks = np.zeros((len(self.detected_classes), *masks.shape[1:]))
+            final_masks[idx, ...] = combined_mask
+        else:
+            final_masks = np.zeros((len(self.detected_classes), self.height, self.width))
         
         return final_masks
     
@@ -209,9 +215,9 @@ class ZeroShotVlnEvaluator(BaseTrainer):
 
     def _random_policy(self):
         action = np.random.choice([
-            # HabitatSimActions.MOVE_FORWARD,
+            HabitatSimActions.MOVE_FORWARD,
             HabitatSimActions.TURN_LEFT,
-            # HabitatSimActions.TURN_RIGHT,
+            HabitatSimActions.TURN_RIGHT,
         ])
         
         return {"action": action}
@@ -229,7 +235,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         self.mapping_module.init_map_and_pose(num_detected_classes=len(self.detected_classes))
         poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
         _, local_map, _, local_pose = self.mapping_module(batch_obs, poses)
-        self.mapping_module.update_map(step=0)
+        self.mapping_module.update_map(step=0, detected_classes=self.detected_classes)
         
         for step in range(self.max_step):
             actions = []
@@ -240,7 +246,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             batch_obs = self._batch_obs(obs)
             poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
             _, local_map, _, local_pose = self.mapping_module(batch_obs, poses)
-            self.mapping_module.update_map(step)
+            self.mapping_module.update_map(step, self.detected_classes)
     
     def eval(self):
         self._set_eval_config()

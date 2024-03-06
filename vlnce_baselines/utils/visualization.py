@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from vlnce_baselines.utils.constant import legend_color_palette
 
 
 def get_contour_points(pos, origin, size=20):
@@ -59,9 +60,36 @@ def init_vis_image():
     vis_image[50:530, 1150] = color
     vis_image[530, 15:655] = color
     vis_image[530, 670:1150] = color
+    
+    vis_image = add_class(vis_image, 0, "out of map", legend_color_palette)
+    vis_image = add_class(vis_image, 1, "obstacle", legend_color_palette)
+    vis_image = add_class(vis_image, 2, "agent trajecy", legend_color_palette)
+    vis_image = add_class(vis_image, 3, "waypoint", legend_color_palette)
 
-    # draw legend
-    # lx, ly, _ = legend.shape
-    # vis_image[537:537 + lx, 155:155 + ly, :] = legend
+    return vis_image
 
+
+def add_class(vis_image, id, name, color_palette):
+    text = f"{id}:{name}"
+    font_color = (0, 0, 0)
+    class_color = list(color_palette[id])
+    class_color.reverse() # BGR -> RGB
+    fontScale = 0.6
+    thickness = 1
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    h, w = 20, 50
+    start_x, start_y = 25, 540 # x is horizontal and point to right, y is vertical and point to down
+    gap_x, gap_y = 280, 30
+    
+    x1 = start_x + (id % 4) * gap_x
+    y1 = start_y + (id // 4) * gap_y
+    x2 = x1 + w
+    y2 = y1 + h
+    text_x = x2 + 10
+    text_y = (y1 + y2) // 2 + 5
+    
+    cv2.rectangle(vis_image, (x1, y1), (x2, y2), class_color, thickness=cv2.FILLED)
+    vis_image = cv2.putText(vis_image, text, (text_x, text_y),
+                            font, fontScale, font_color, thickness, cv2.LINE_AA)
+    
     return vis_image

@@ -33,3 +33,6 @@ class OrderedSet:
 
     def __str__(self):
         return str(self.order)
+    
+    def __getitem__(self, index: int):
+        return self.order[index]

@@ -22,7 +22,9 @@ import habitat_extensions.pose_utils as pu
 import vlnce_baselines.utils.depth_utils as du
 import vlnce_baselines.utils.visualization as vu
 from vlnce_baselines.utils.map_utils import get_grid
+from vlnce_baselines.utils.data_utils import OrderedSet
 from vlnce_baselines.utils.constant import color_palette
+from vlnce_baselines.utils.constant import legend_color_palette
 
 
 class Semantic_Mapping(nn.Module):
@@ -70,7 +72,7 @@ class Semantic_Mapping(nn.Module):
         self.curr_loc = None
         self.last_loc = None
         self.goal = None
-        self.last_state = None
+        self.vis_classes = []
         
         if self.visualize or self.print_images:
             # self.legend = cv2.imread('docs/legend.png')
@@ -202,7 +204,8 @@ class Semantic_Mapping(nn.Module):
         
         # map_size_cm = 2400
         # full_pos[0]: [x=12m, y=12m, ori=0], agent always start at the center of the map
-        self.full_pose[:, :2] = self.map_size_cm / 100.0 / 2.0
+        self.full_pose[:, :2] = self.args.MAP_SIZE_CM / 100.0 / 2.0
+        print("init full pose: ", self.full_pose)
 
         locs = self.full_pose.cpu().numpy()
         self.state[:, :3] = locs # state: [x,y,z,gx1,gx2,gy1,gy2]
@@ -236,10 +239,12 @@ class Semantic_Mapping(nn.Module):
             self.curr_loc[e] = self.full_pose[e] - \
                 torch.from_numpy(self.origins[e]).to(self.device).float()
                 
-    def update_map(self, step):
-        self.last_loc = self.curr_loc
+    def update_map(self, step: int, detected_classes: OrderedSet) -> None:
+        if step == 0:
+            self.last_loc = self.state[:, :3]
+        else:
+            self.last_loc = self.curr_loc
         locs = self.local_pose.cpu().numpy()
-        self.last_state = self.state.copy()
         self.state[:, :3] = locs + self.origins
         self.curr_loc = self.state[:, :3]
         self.local_map[:, 2, :, :].fill_(0.)  # Resetting current location channel
@@ -249,46 +254,53 @@ class Semantic_Mapping(nn.Module):
                         int(c * 100.0 / self.resolution)]
             self.local_map[e, 2:4, loc_r - 1:loc_r + 2, loc_c - 1:loc_c + 2] = 1.
             
-        if step == self.args.CENTER_RESET_STEPS:
+        if ((step + 1) % self.args.CENTER_RESET_STEPS) == 0:
             for e in range(self.num_environments):
                 self.full_map[e, :, self.lmb[e, 0]:self.lmb[e, 1], self.lmb[e, 2]:self.lmb[e, 3]] = \
                     self.local_map[e]
-                    
+                
                 # full_pose is actually global agent position.
                 self.full_pose[e] = self.local_pose[e] + \
                     torch.from_numpy(self.origins[e]).to(self.device).float()
-
                 locs = self.full_pose[e].cpu().numpy()
                 r, c = locs[1], locs[0]
                 loc_r, loc_c = [int(r * 100.0 / self.resolution),
                                 int(c * 100.0 / self.resolution)]
-
                 self.lmb[e] = self._get_local_map_boundaries((loc_r, loc_c),
                                                   (self.local_w, self.local_h),
                                                   (self.full_w, self.full_h))
-
                 self.state[e, 3:] = self.lmb[e]
                 self.origins[e] = [self.lmb[e][2] * self.resolution / 100.0,
                               self.lmb[e][0] * self.resolution / 100.0, 0.]
-
                 self.local_map[e] = self.full_map[e, :,
                                         self.lmb[e, 0]:self.lmb[e, 1],
                                         self.lmb[e, 2]:self.lmb[e, 3]]
                 self.local_pose[e] = self.full_pose[e] - \
                     torch.from_numpy(self.origins[e]).to(self.device).float()
-        
+                
         if self.visualize:
-            self._visualize(id=0, goal=self.goal)
+            self._visualize(id=0, goal=self.goal, detected_classes=detected_classes)
     
-    def _visualize(self, id: int, goal: Tensor=None) -> None:
+    def _visualize(self, id: int, goal: Tensor=None, detected_classes: OrderedSet=None) -> None:
         result_dir = self.args.RESULTS_DIR
         save_dir = "{}/visualization/".format(result_dir)
         os.makedirs(save_dir, exist_ok=True)
         
-        self.local_map[id, -1, ...] = 1e-5
-        obstacle_map = self.local_map[id, 0, ...].cpu().numpy()
-        explored_map = self.local_map[id, 1, ...].cpu().numpy()
-        semantic_map = self.local_map[id, 4:, ...].argmax(0).cpu().numpy()
+        # the last item of detected_class is always "not_a_cat"
+        if len(detected_classes[:-1]) > len(self.vis_classes):
+            for i in range(len(detected_classes[:-1]) - len(self.vis_classes)):
+                self.vis_image = vu.add_class(
+                    self.vis_image, 
+                    4 + len(self.vis_classes) + i, 
+                    detected_classes[i + len(self.vis_classes)], 
+                    legend_color_palette)
+                self.vis_classes.append(detected_classes[i])
+        
+        local_maps = self.local_map.clone()
+        local_maps[:, -1, ...] = 1e-5
+        obstacle_map = local_maps[id, 0, ...].cpu().numpy()
+        explored_map = local_maps[id, 1, ...].cpu().numpy()
+        semantic_map = local_maps[id, 4:, ...].argmax(0).cpu().numpy()
         start_x, start_y, start_o, gx1, gx2, gy1, gy2 = self.state[id]
         gx1, gx2, gy1, gy2 = int(gx1), int(gx2), int(gy1), int(gy2)
         r, c = start_y, start_x
@@ -297,7 +309,6 @@ class Semantic_Mapping(nn.Module):
         start = pu.threshold_poses(start, obstacle_map.shape)
         
         last_start_x, last_start_y = self.last_loc[id][0], self.last_loc[id][1]
-        start_x, start_y, start_o, gx1, gx2, gy1, gy2 = self.last_state[id]
         gx1, gx2, gy1, gy2 = int(gx1), int(gx2), int(gy1), int(gy2)
         r, c = last_start_y, last_start_x
         last_start = [int(r * 100.0 / self.resolution - gx1),
@@ -306,20 +317,24 @@ class Semantic_Mapping(nn.Module):
         self.visited_vis[gx1:gx2, gy1:gy2] = vu.draw_line(last_start, start, self.visited_vis[gx1:gx2, gy1:gy2])
         
         """
+        color palette:
         0: out of map
         1: obstacles
-        2: navigable area
-        3: agent trajectory
-        4: goal
-        5 ~ num_detected_class: detected objects
+        2: agent trajectory
+        3: goal
+        4 ~ num_detected_class: detected objects
         """
         semantic_map += 5
-        not_cat_id = self.local_map.shape[1]
+        not_cat_id = local_maps.shape[1]
         not_cat_mask = (semantic_map == not_cat_id)
         obstacle_map_mask = np.rint(obstacle_map)
         explored_map_mask = np.rint(explored_map)
         
         semantic_map[not_cat_mask] = 0
+        
+        m_free = np.logical_and(not_cat_mask, explored_map_mask)
+        semantic_map[m_free] = 2
+        
         m_obstacle = np.logical_and(not_cat_mask, obstacle_map_mask)
         semantic_map[m_obstacle] = 1
         
@@ -357,7 +372,7 @@ class Semantic_Mapping(nn.Module):
         
         if self.visualize:
             cv2.imshow("Thread 1", self.vis_image)
-            cv2.waitKey(1)
+            cv2.waitKey(5)
 
     def forward(self, obs: np.ndarray, pose_obs):
         """
@@ -420,10 +435,11 @@ class Semantic_Mapping(nn.Module):
         # shape: [bs, num_detected_classes + 1, 100, 100, 80]
         voxels = du.splat_feat_nd(self.init_grid * 0., self.feat, XYZ_cm_std).transpose(2, 3)
         min_z = int(25 / z_resolution - min_h) # 25 / 5 - (-8) = 13
+        min_z = 2
         max_z = int((self.agent_height + 1) / z_resolution - min_h) # int((88 + 1) / 5 - (-8))= 25
 
-        agent_height_proj = voxels[..., min_z:max_z].sum(4) # shape: [bs, num_detected_classes + 1, 100, 100, 80]
-        all_height_proj = voxels.sum(4) # shape: [bs, num_detected_classes + 1, 100, 100, 80]
+        agent_height_proj = voxels[..., min_z:max_z].sum(4) # shape: [bs, num_detected_classes + 1, 100, 100]
+        all_height_proj = voxels.sum(4) # shape: [bs, num_detected_classes + 1, 100, 100]
 
         fp_map_pred = agent_height_proj[:, :1, :, :] # obstacle map
         fp_exp_pred = all_height_proj[:, :1, :, :] # explored map
