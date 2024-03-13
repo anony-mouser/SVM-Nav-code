@@ -6,7 +6,7 @@ SIMULATOR:
     SENSORS: [RGB_SENSOR, DEPTH_SENSOR]
     HEIGHT: 0.88
     RADIUS: 0.18
-  FORWARD_STEP_SIZE: 0.25
+  FORWARD_STEP_SIZE: 1.25
   TURN_ANGLE: 30
   HABITAT_SIM_V0:
     GPU_DEVICE_ID: 0
@@ -32,6 +32,9 @@ TASK:
   SENSORS: [
     INSTRUCTION_SENSOR,
     SENSOR_POSE_SENSOR,
+    SUB_INSTRUCTION_SENSOR,
+    POSITION_SENSOR,
+    HEADING_SENSOR
   ]
   INSTRUCTION_SENSOR_UUID: instruction
   POSSIBLE_ACTIONS: [STOP, MOVE_FORWARD, TURN_LEFT, TURN_RIGHT]
@@ -61,4 +64,4 @@ DATASET:
   SPLIT: val_unseen
   DATA_PATH: data/datasets/R2R_VLNCE_v1-3_preprocessed/{split}/{split}.json.gz
   SCENES_DIR: data/scene_datasets/
-  LLM_REPLYS_PATH: null
+  LLM_REPLYS_PATH: /data/ckh/Zero-Shot-VLN-FusionMap/tests/llm_reply.json

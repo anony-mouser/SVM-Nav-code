@@ -124,7 +124,7 @@ class VLNCEDatasetV1(Dataset):
 
         for episode in deserialized["episodes"]:
             if llm_replys_filename:
-                llm_reply = llm_replys[episode.episode_id]
+                llm_reply = llm_replys.get(str(episode["episode_id"]), {})
                 episode["llm_reply"] = llm_reply
             episode = VLNExtendedEpisode(**episode)
 

@@ -51,31 +51,34 @@ class Semantic_Mapping(nn.Module):
     def __init__(self, args):
         super(Semantic_Mapping, self).__init__()
         self.args = args
-        self.device = args.DEVICE
-        self.screen_h = args.FRAME_HEIGHT
-        self.screen_w = args.FRAME_WIDTH
-        self.resolution = args.MAP_RESOLUTION
-        self.z_resolution = args.MAP_RESOLUTION
-        self.global_downscaling = args.GLOBAL_DOWNSCALING
-        self.map_size_cm = args.MAP_SIZE_CM // args.GLOBAL_DOWNSCALING
-        self.n_channels = 3
-        self.vision_range = args.VISION_RANGE # args.vision_range=100(cm)
         self.dropout = 0.5
+        self.n_channels = 3
+        self.goal = None
+        self.curr_loc = None
+        self.last_loc = None
+        self.vis_classes = []
+        
         self.fov = args.HFOV
+        self.min_z = args.MIN_Z # a lager min_z could lost some information on the floor, 2cm is ok
+        self.device = args.DEVICE
         self.du_scale = args.DU_SCALE # depth unit
+        self.visualize = args.VISUALIZE
+        self.screen_w = args.FRAME_WIDTH
+        self.screen_h = args.FRAME_HEIGHT
+        self.vision_range = args.VISION_RANGE # args.vision_range=100(cm)
+        self.resolution = args.MAP_RESOLUTION
+        self.print_images = args.PRINT_IMAGES
+        self.z_resolution = args.MAP_RESOLUTION
+        self.num_environments = args.NUM_ENVIRONMENTS
+        self.global_downscaling = args.GLOBAL_DOWNSCALING
         self.cat_pred_threshold = args.CAT_PRED_THRESHOLD
         self.exp_pred_threshold = args.EXP_PRED_THRESHOLD
         self.map_pred_threshold = args.MAP_PRED_THRESHOLD
-        self.num_environments = args.NUM_ENVIRONMENTS
-        self.visualize = args.VISUALIZE
-        self.print_images = args.PRINT_IMAGES
-        self.curr_loc = None
-        self.last_loc = None
-        self.goal = None
-        self.vis_classes = []
+        self.map_shape = (self.args.MAP_SIZE_CM // self.resolution,
+                          self.args.MAP_SIZE_CM // self.resolution)
+        self.map_size_cm = args.MAP_SIZE_CM // args.GLOBAL_DOWNSCALING
         
         if self.visualize or self.print_images:
-            # self.legend = cv2.imread('docs/legend.png')
             self.vis_image = vu.init_vis_image()
             self.rgb_vis = None
 
@@ -114,10 +117,18 @@ class Semantic_Mapping(nn.Module):
         new_nc = num_detected_classes + self.MAP_CHANNELS
         if new_nc > self.local_map.shape[1]:
             pad_num = new_nc - self.local_map.shape[1]
-            local_map_pad = torch.zeros(self.num_environments, pad_num, self.local_w, self.local_h).float().to(self.device)
-            full_map_pad = torch.zeros(self.num_environments, pad_num, self.full_w, self.full_h).float().to(self.device)
+            local_map_pad = torch.zeros(self.num_environments, 
+                                        pad_num, 
+                                        self.local_w, 
+                                        self.local_h).float().to(self.device)
+            full_map_pad = torch.zeros(self.num_environments, 
+                                       pad_num, 
+                                       self.full_w, 
+                                       self.full_h).float().to(self.device)
             self.local_map = torch.cat([self.local_map, local_map_pad], axis=1)
+            self.one_step_local_map = torch.cat([self.one_step_local_map, local_map_pad], axis=1)
             self.full_map = torch.cat([self.full_map, full_map_pad], axis=1)
+            self.one_step_full_map = torch.cat([self.one_step_full_map, full_map_pad], axis=1)
             
     def _prepare(self, nc: int) -> None:
         r"""Create empty full_map, local_map, full_pose, local_pose, origins, local map boundries
@@ -131,8 +142,6 @@ class Semantic_Mapping(nn.Module):
         full_w = full_h = 480
         local_w, local_h = 240
         """
-        map_size = self.args.MAP_SIZE_CM // self.resolution
-        self.map_shape = (map_size, map_size)
         self.full_w, self.full_h = self.map_shape
         self.local_w = int(self.full_w / self.global_downscaling)
         self.local_h = int(self.full_h / self.global_downscaling)
@@ -144,8 +153,22 @@ class Semantic_Mapping(nn.Module):
         map_resolution = 5 so, the full_map should be (2400 / 5, 2400 / 5) = (480, 480)
         local_map is half of full_map, i.e. (240, 240)
         """
-        self.full_map = torch.zeros(self.num_environments, nc, self.full_w, self.full_h).float().to(self.device)
-        self.local_map = torch.zeros(self.num_environments, nc, self.local_w, self.local_h).float().to(self.device)
+        self.full_map = torch.zeros(self.num_environments, 
+                                    nc, 
+                                    self.full_w, 
+                                    self.full_h).float().to(self.device)
+        self.one_step_full_map = torch.zeros(self.num_environments, 
+                                             nc, 
+                                             self.full_w, 
+                                             self.full_h).float().to(self.device)
+        self.local_map = torch.zeros(self.num_environments, 
+                                     nc, 
+                                     self.local_w, 
+                                     self.local_h).float().to(self.device)
+        self.one_step_local_map = torch.zeros(self.num_environments, 
+                                              nc, 
+                                              self.local_w, 
+                                              self.local_h).float().to(self.device)
         
         r"""
         pose.shape=(3,): [x, y, orientation]
@@ -200,6 +223,7 @@ class Semantic_Mapping(nn.Module):
         self._prepare(nc)
         
         self.full_map.fill_(0.)
+        self.one_step_full_map.fill_(0.)
         self.full_pose.fill_(0.) # [bs, 3]
         
         # map_size_cm = 2400
@@ -217,6 +241,7 @@ class Semantic_Mapping(nn.Module):
             # current and past agent location: agent takes a (3,3) square in the middle of the (480, 480) map. 
             # (3, 3) in spatial map <=> (15cm, 15cm) in physical world
             self.full_map[e, 2:4, loc_r - 1:loc_r + 2, loc_c - 1:loc_c + 2] = 1.0
+            self.one_step_full_map[e, 2:4, loc_r - 1:loc_r + 2, loc_c - 1:loc_c + 2] = 1.0
 
             # lmb: [gx1, gx2, gy1, gy2]
             self.lmb[e] = self._get_local_map_boundaries((loc_r, loc_c),
@@ -231,6 +256,8 @@ class Semantic_Mapping(nn.Module):
         for e in range(self.num_environments):
             # extract the local map
             self.local_map[e] = self.full_map[e, :, self.lmb[e, 0] : self.lmb[e, 1], self.lmb[e, 2] : self.lmb[e, 3]]
+            self.one_step_local_map[e] = self.one_step_full_map[e, :, self.lmb[e, 0] : self.lmb[e, 1], 
+                                                                self.lmb[e, 2] : self.lmb[e, 3]]
             
             # local_pose initialized as (6,6,0) meter
             self.local_pose[e] = self.full_pose[e] - \
@@ -238,7 +265,7 @@ class Semantic_Mapping(nn.Module):
                 
             self.curr_loc[e] = self.full_pose[e] - \
                 torch.from_numpy(self.origins[e]).to(self.device).float()
-                
+                                
     def update_map(self, step: int, detected_classes: OrderedSet) -> None:
         if step == 0:
             self.last_loc = self.state[:, :3]
@@ -248,16 +275,28 @@ class Semantic_Mapping(nn.Module):
         self.state[:, :3] = locs + self.origins
         self.curr_loc = self.state[:, :3]
         self.local_map[:, 2, :, :].fill_(0.)  # Resetting current location channel
+        self.one_step_local_map[:, 2, :, :].fill_(0.)  # Resetting current location channel
         for e in range(self.num_environments):
             r, c = locs[e, 1], locs[e, 0]
             loc_r, loc_c = [int(r * 100.0 / self.resolution),
                         int(c * 100.0 / self.resolution)]
             self.local_map[e, 2:4, loc_r - 1:loc_r + 2, loc_c - 1:loc_c + 2] = 1.
+            self.one_step_local_map[e, 2:4, loc_r - 1:loc_r + 2, loc_c - 1:loc_c + 2] = 1.
+            
+            self.full_map[e, :, self.lmb[e, 0]:self.lmb[e, 1], self.lmb[e, 2]:self.lmb[e, 3]] = \
+                    self.local_map[e]
+            self.one_step_full_map[e, :, self.lmb[e, 0]:self.lmb[e, 1], self.lmb[e, 2]:self.lmb[e, 3]] = \
+                    self.one_step_local_map[e]
+            
+            self.full_pose[e] = self.local_pose[e] + \
+                    torch.from_numpy(self.origins[e]).to(self.device).float()
             
         if ((step + 1) % self.args.CENTER_RESET_STEPS) == 0:
             for e in range(self.num_environments):
                 self.full_map[e, :, self.lmb[e, 0]:self.lmb[e, 1], self.lmb[e, 2]:self.lmb[e, 3]] = \
                     self.local_map[e]
+                self.one_step_full_map[e, :, self.lmb[e, 0]:self.lmb[e, 1], self.lmb[e, 2]:self.lmb[e, 3]] = \
+                    self.one_step_local_map[e]
                 
                 # full_pose is actually global agent position.
                 self.full_pose[e] = self.local_pose[e] + \
@@ -275,15 +314,40 @@ class Semantic_Mapping(nn.Module):
                 self.local_map[e] = self.full_map[e, :,
                                         self.lmb[e, 0]:self.lmb[e, 1],
                                         self.lmb[e, 2]:self.lmb[e, 3]]
+                self.one_step_local_map[e] = self.one_step_full_map[e, :,
+                                        self.lmb[e, 0]:self.lmb[e, 1],
+                                        self.lmb[e, 2]:self.lmb[e, 3]]
                 self.local_pose[e] = self.full_pose[e] - \
                     torch.from_numpy(self.origins[e]).to(self.device).float()
                 
         if self.visualize:
-            self._visualize(id=0, goal=self.goal, detected_classes=detected_classes)
+            self._visualize(id=0, 
+                            goal=self.goal, 
+                            detected_classes=detected_classes,
+                            step=step)
+        # torch.save(self.one_step_local_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/one_step_maps/one_step_map%d.pt"%step)
+        torch.save(self.one_step_full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/left_maps/one_step_full_map%d.pt"%step)
+        # self.one_step_local_map.fill_(0.)
+        # self.one_step_full_map.fill_(0.)
+        torch.save(self.full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/left_maps/full_map%d.pt"%step)
+        # torch.save(self.local_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/local_maps3/local_map%d.pt"%step)
+        
+        return self.one_step_full_map.cpu().numpy(), self.full_pose.cpu().numpy()
     
-    def _visualize(self, id: int, goal: Tensor=None, detected_classes: OrderedSet=None) -> None:
+    def _visualize(self, 
+                   id: int, 
+                   goal: Tensor=None, 
+                   detected_classes: OrderedSet=None,
+                   step: int=None) -> None:
+        """Try to visualize RGB images with segmentation and semantic map
+
+        Args:
+            id (int): since we are running a batch of environments, 
+            it's resource consuming to render all environments together,
+            so please only choose one environmet to visualize.
+        """
         result_dir = self.args.RESULTS_DIR
-        save_dir = "{}/visualization/".format(result_dir)
+        save_dir = "{}/visualization/eps_{}".format(result_dir, id)
         os.makedirs(save_dir, exist_ok=True)
         
         # the last item of detected_class is always "not_a_cat"
@@ -342,7 +406,8 @@ class Semantic_Mapping(nn.Module):
         semantic_map[vis_mask] = 3
         color_pal = [int(x * 255.) for x in color_palette]
         
-        # create a new image using palette mode(https://pillow.readthedocs.io/en/stable/handbook/concepts.html#concept-modes)
+        # create a new image using palette mode
+        # (https://pillow.readthedocs.io/en/stable/handbook/concepts.html#concept-modes)
         # in this mode, we can map colors to picture use a color palette
         sem_map_vis = Image.new("P", (semantic_map.shape[1], semantic_map.shape[0]))
         sem_map_vis.putpalette(color_pal)
@@ -351,7 +416,8 @@ class Semantic_Mapping(nn.Module):
         sem_map_vis.putdata(semantic_map.flatten().astype(np.uint8))
         sem_map_vis = sem_map_vis.convert("RGB")
         
-        # flip image up and down, so that agnet's turn in simulator is the same as its turn in semantic map visualization
+        # flip image up and down, so that agnet's turn in simulator 
+        # is the same as its turn in semantic map visualization
         sem_map_vis = np.flipud(sem_map_vis)
         sem_map_vis = sem_map_vis[:, :, [2, 1, 0]] # turn to bgr for opencv
         sem_map_vis = cv2.resize(sem_map_vis, (480, 480), interpolation=cv2.INTER_NEAREST)
@@ -372,20 +438,16 @@ class Semantic_Mapping(nn.Module):
         
         if self.visualize:
             cv2.imshow("Thread 1", self.vis_image)
-            cv2.waitKey(5)
+            cv2.waitKey(1)
+            
+        if self.print_images:
+            fn = "{}/step-{}.png".format(save_dir, step)
+            cv2.imwrite(fn, self.vis_image)
 
     def forward(self, obs: np.ndarray, pose_obs):
         """
         Args:
             obs: (b, c, h, w), b = batch size, c = 3(RGB) + 1(Depth) + num_detected_categories
-            pose_obs:
-            maps_last:
-            poses_last:
-        Returns:
-            fp_map_pred:
-            map_pred: 
-            pose_pred: 
-            current_poses:
         """
         # if use CoCo the number of categories is 16(i.e. c=16), but now open-vocabulary; 
         bs, c, h, w = obs.size()
@@ -395,16 +457,15 @@ class Semantic_Mapping(nn.Module):
         num_detected_categories = c - 4 # 4=3(RGB) + 1(Depth)
         self._dynamic_process(num_detected_categories)
 
-        point_cloud_t = du.get_point_cloud_from_z_t(
-            depth, self.camera_matrix, self.device, scale=self.du_scale) # shape: [bs, h, w, 3] 3 is (x, y, z) for each point in (h, w)
+        # shape: [bs, h, w, 3] 3 is (x, y, z) for each point in (h, w)
+        point_cloud_t = du.get_point_cloud_from_z_t(depth, self.camera_matrix, self.device, scale=self.du_scale)
         
-        agent_view_t = du.transform_camera_view_t(
-            point_cloud_t, self.agent_height, 0, self.device) # elevation = 0, only use forward obs; shape: [bs, h, w, 3]
-
+        agent_view_t = du.transform_camera_view_t(point_cloud_t, self.agent_height, 0, self.device)
+        
         # point cloud in world axis
         # self.shift_loc=[250, 0, pi/2] => heading is always 90(degree), change with turn left
-        agent_view_centered_t = du.transform_pose_t(
-            agent_view_t, self.shift_loc, self.device) # shape: [bs, h, w, 3] => (bs, 120, 160, 3)
+        # shape: [bs, h, w, 3] => (bs, 120, 160, 3)
+        agent_view_centered_t = du.transform_pose_t(agent_view_t, self.shift_loc, self.device) 
 
         max_h = self.max_height # 72
         min_h = self.min_height # -8
@@ -425,7 +486,8 @@ class Semantic_Mapping(nn.Module):
                                      XYZ_cm_std.shape[2] * XYZ_cm_std.shape[3]) # [bs, 3, x*y]
         
         # obs: [b, c, h*w] => [b, 17, 19200], feat is a tensor contains all predicted semantic features
-        self.feat[:, 1:, :] = nn.AvgPool2d(self.du_scale)(obs[:, 4:, :, :]).view(bs, c - 4, h // self.du_scale * w // self.du_scale)
+        pool = nn.AvgPool2d(self.du_scale)
+        self.feat[:, 1:, :] = pool(obs[:, 4:, :, :]).view(bs, c - 4, h // self.du_scale * w // self.du_scale)
 
         # self.init_grid: [bs, categories + 1, x=vr, y=vr, z=(max_height - min_height)] => [bs, 17, 100, 100, 80]
         # feat: average of all categories's predicted semantic features, [bs, 17, 19200]
@@ -434,11 +496,9 @@ class Semantic_Mapping(nn.Module):
         assert self.init_grid.shape[1] == self.feat.shape[1], "init_grid and feat should have same number of channels!"
         # shape: [bs, num_detected_classes + 1, 100, 100, 80]
         voxels = du.splat_feat_nd(self.init_grid * 0., self.feat, XYZ_cm_std).transpose(2, 3)
-        min_z = int(25 / z_resolution - min_h) # 25 / 5 - (-8) = 13
-        min_z = 2
         max_z = int((self.agent_height + 1) / z_resolution - min_h) # int((88 + 1) / 5 - (-8))= 25
 
-        agent_height_proj = voxels[..., min_z:max_z].sum(4) # shape: [bs, num_detected_classes + 1, 100, 100]
+        agent_height_proj = voxels[..., self.min_z:max_z].sum(4) # shape: [bs, num_detected_classes + 1, 100, 100]
         all_height_proj = voxels.sum(4) # shape: [bs, num_detected_classes + 1, 100, 100]
 
         fp_map_pred = agent_height_proj[:, :1, :, :] # obstacle map
@@ -495,15 +555,17 @@ class Semantic_Mapping(nn.Module):
         st_pose[:, 2] = 90. - (st_pose[:, 2])
 
         # get rotation matrix and translation matrix according to new pose (x, y, theta(degree))
-        rot_mat, trans_mat = get_grid(st_pose, agent_view.size(),
-                                      self.device)
+        rot_mat, trans_mat = get_grid(st_pose, agent_view.size(), self.device)
 
         rotated = F.grid_sample(agent_view, rot_mat, align_corners=True)
-        translated = F.grid_sample(rotated, trans_mat, align_corners=True)
+        translated = F.grid_sample(rotated, trans_mat, align_corners=True) # shape: [bs, c, 240, 240]
         maps2 = torch.cat((self.local_map.unsqueeze(1), translated.unsqueeze(1)), 1)
+        one_step_maps2 = torch.cat((self.one_step_local_map.unsqueeze(1), translated.unsqueeze(1)), 1)
 
         map_pred, _ = torch.max(maps2, 1)
+        one_step_map_pred, _ = torch.max(one_step_maps2, 1)
         self.local_map = map_pred
+        self.one_step_local_map = one_step_map_pred
         self.local_pose = current_poses
 
-        return fp_map_pred, map_pred, pose_pred, current_poses
+        # return fp_map_pred, map_pred, pose_pred, current_poses

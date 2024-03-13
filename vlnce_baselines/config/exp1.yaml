@@ -12,6 +12,10 @@ VIDEO_DIR: data/logs/video/
 
 SENSORS: ['RGB_SENSOR', 'DEPTH_SENSOR']
 
+MAP:
+  VISUALIZE: True
+  PRINT_IMAGES: True
+
 EVAL:
   USE_CKPT_CONFIG: False
   SPLIT: val_unseen

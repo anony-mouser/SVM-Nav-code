@@ -11,10 +11,28 @@ _C = get_config()
 _C.defrost()
 
 # -----------------------------------------------------------------------------
-# VLN ORACLE PROGRESS SENSOR
+# VLN SENSOR POSE SENSOR
 # -----------------------------------------------------------------------------
 _C.TASK.SENSOR_POSE_SENSOR = CN()
 _C.TASK.SENSOR_POSE_SENSOR.TYPE = "SensorPoseSensor"
+
+# -----------------------------------------------------------------------------
+# VLN SUB INSTRUCTION SENSOR
+# -----------------------------------------------------------------------------
+_C.TASK.SUB_INSTRUCTION_SENSOR = CN()
+_C.TASK.SUB_INSTRUCTION_SENSOR.TYPE = "SubInstructionSensor"
+
+# -----------------------------------------------------------------------------
+# VLN POSITION SENSOR
+# -----------------------------------------------------------------------------
+_C.TASK.POSITION_SENSOR = CN()
+_C.TASK.POSITION_SENSOR.TYPE = "PositionSensor"
+
+# -----------------------------------------------------------------------------
+# VLN HEADING SENSOR
+# -----------------------------------------------------------------------------
+_C.TASK.HEADING_SENSOR = CN()
+_C.TASK.HEADING_SENSOR.TYPE = "HeadingSensor"
 
 # ----------------------------------------------------------------------------
 # NDTW MEASUREMENT
@@ -91,6 +109,7 @@ _C.TASK.TOP_DOWN_MAP_VLNCE.FOG_OF_WAR.VISIBILITY_DIST = 5.0
 # ----------------------------------------------------------------------------
 # DATASET EXTENSIONS
 # ----------------------------------------------------------------------------
+# _C.DATASET.EPISODES_ALLOWED = [701]
 _C.DATASET.EPISODES_ALLOWED = [30]
 
 

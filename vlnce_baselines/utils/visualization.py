@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from collections import Sequence
 from vlnce_baselines.utils.constant import legend_color_palette
 
 
@@ -93,3 +94,13 @@ def add_class(vis_image, id, name, color_palette):
                             font, fontScale, font_color, thickness, cv2.LINE_AA)
     
     return vis_image
+
+
+def add_text(image: np.ndarray, text: str, position: Sequence):
+    textsize = cv2.getTextSize(text, fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, thickness=1)[0]
+    x, y = position
+    x += (480 - textsize[0]) // 2
+    image = cv2.putText(image, text, (x, y), fontFace=cv2.FONT_HERSHEY_SIMPLEX, 
+                        fontScale=1, color=0, thickness=1, lineType=cv2.LINE_AA)
+    
+    return image

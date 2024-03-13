@@ -19,14 +19,17 @@ _C.VIDEO_OPTION = []  # options: "disk", "tensorboard"
 _C.VIDEO_DIR = "videos/debug"
 _C.TENSORBOARD_DIR = "data/tensorboard_dirs/debug"
 _C.RESULTS_DIR = "data/checkpoints/pretrained/evals"
+_C.BLIP2_MODEL_DIR = "data/blip2/blip2_model.pt"
+_C.BLIP2_VIS_PROCESSORS_DIR = "data/blip2/blip2_vis_processors.pt"
+_C.BLIP2_TEXT_PROCESSORS_DIR = "data/blip2/blip2_text_processors.pt"
 
 # -----------------------------------------------------------------------------
 # MAP CONFIG
 # -----------------------------------------------------------------------------
 _C.MAP = CN()
-_C.MAP.GROUNDING_DINO_CONFIG_PATH = "vlnce_baselines/grounded_sam/GroundingDINO_SwinT_OGC.py"
-_C.MAP.GROUNDING_DINO_CHECKPOINT_PATH = "vlnce_baselines/grounded_sam/groundingdino_swint_ogc.pth"
-_C.MAP.SAM_CHECKPOINT_PATH = "vlnce_baselines/grounded_sam/sam_vit_h_4b8939.pth"
+_C.MAP.GROUNDING_DINO_CONFIG_PATH = "data/grounded_sam/GroundingDINO_SwinT_OGC.py"
+_C.MAP.GROUNDING_DINO_CHECKPOINT_PATH = "data/grounded_sam/groundingdino_swint_ogc.pth"
+_C.MAP.SAM_CHECKPOINT_PATH = "data/grounded_sam/sam_vit_h_4b8939.pth"
 _C.MAP.SAM_ENCODER_VERSION = "vit_h"
 _C.MAP.BOX_THRESHOLD = 0.35
 _C.MAP.TEXT_THRESHOLD = 0.25
@@ -42,9 +45,9 @@ _C.MAP.EXP_PRED_THRESHOLD = 1.0
 _C.MAP.MAP_PRED_THRESHOLD = 1.0
 _C.MAP.MAX_SEM_CATEGORIES = 16
 _C.MAP.CENTER_RESET_STEPS = 25
-_C.MAP.VISUALIZE = True
+_C.MAP.MIN_Z = 2 # a lager min_z could lost some information on the floor, 2cm is ok
+_C.MAP.VISUALIZE = False
 _C.MAP.PRINT_IMAGES = False
-_C.MAP.RESULTS_DIR = 'data/logs/eval_results/'
 
 
 # -----------------------------------------------------------------------------

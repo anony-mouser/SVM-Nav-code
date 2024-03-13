@@ -13,4 +13,3 @@ __pycache__/
 
 /data/*
 /tests
-/vlnce_baselines/grounded_sam/*

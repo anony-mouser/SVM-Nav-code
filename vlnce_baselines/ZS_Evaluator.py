@@ -1,6 +1,6 @@
 import numpy as np
 from PIL import Image
-from typing import List
+from typing import List, Any
 from collections import defaultdict
 
 import torch
@@ -15,6 +15,7 @@ from habitat_baselines.common.environments import get_env_class
 from habitat.sims.habitat_simulator.actions import HabitatSimActions
 from habitat_baselines.common.baseline_registry import baseline_registry
 
+from vlnce_baselines.map.value_map import ValueMap
 from vlnce_baselines.utils.data_utils import OrderedSet
 from vlnce_baselines.map.mapping import Semantic_Mapping
 from vlnce_baselines.common.env_utils import construct_envs
@@ -59,6 +60,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         self.config.MAP.HFOV = self.config.TASK_CONFIG.SIMULATOR.RGB_SENSOR.HFOV
         self.config.MAP.AGENT_HEIGHT = self.config.TASK_CONFIG.SIMULATOR.AGENT_0.HEIGHT
         self.config.MAP.NUM_ENVIRONMENTS = self.config.NUM_ENVIRONMENTS
+        self.config.MAP.RESULTS_DIR = self.config.RESULTS_DIR
         self.world_size = self.config.GPU_NUMBERS
         self.local_rank = self.config.local_rank
         if self.world_size > 1:
@@ -87,11 +89,15 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         print("start to initialize policy")
         # Semantic Segmentation
         self.segment_module = GroundedSAM(self.config)
+        
         # Semantic Mapping
         self.mapping_module = Semantic_Mapping(self.config.MAP).to(self.device)
         self.mapping_module.eval()
         
-    def _concat_obs(self, obs: np.ndarray) -> np.ndarray:
+        # Vlue Map
+        self.value_map = ValueMap(self.config, self.mapping_module.map_shape)
+        
+    def _concat_obs(self, obs: Observations) -> np.ndarray:
         rgb = obs['rgb'].astype(np.uint8)
         depth = obs['depth']
         state = np.concatenate((rgb, depth), axis=2).transpose(2, 0, 1) # (h, w, c)->(c, h, w)
@@ -213,31 +219,61 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         
         return torch.from_numpy(batch).to(self.device)
 
+    def _preprocess_sub_instruction(self, obs: Observations) -> Any:
+        pass
+    
     def _random_policy(self):
         action = np.random.choice([
             HabitatSimActions.MOVE_FORWARD,
             HabitatSimActions.TURN_LEFT,
-            HabitatSimActions.TURN_RIGHT,
+            # HabitatSimActions.TURN_RIGHT,
         ])
         
         return {"action": action}
         
-    def rollout(self):
-        """
-        execute a whole episode which consists of a sequence of sub-steps
-        """
-        print("start to rollout")
-        # self.envs.resume_all()
-        # import pdb;pdb.set_trace()
+    def _look_around(self):
+        print("\n========== LOOK AROUND ==========\n")
         obs = self.envs.reset() #type(obs): list
         batch_obs = self._batch_obs(obs)
         
         self.mapping_module.init_map_and_pose(num_detected_classes=len(self.detected_classes))
         poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
-        _, local_map, _, local_pose = self.mapping_module(batch_obs, poses)
-        self.mapping_module.update_map(step=0, detected_classes=self.detected_classes)
+        self.mapping_module(batch_obs, poses)
+        one_step_full_map, full_pose = self.mapping_module.update_map(step=0, detected_classes=self.detected_classes)
+        self.mapping_module.one_step_full_map.fill_(0.)
+        self.mapping_module.one_step_local_map.fill_(0.)
         
-        for step in range(self.max_step):
+        blip_value = self.value_map.get_blip_value(Image.fromarray(obs[0]['rgb']), 
+                                                   "The Giraffi in the living room.")
+        blip_value = blip_value.detach().cpu().numpy()
+        self.value_map(0, one_step_full_map[0], 1.0, full_pose[0])
+        
+        for step in range(1, 12):
+            actions = []
+            for _ in range(self.config.NUM_ENVIRONMENTS):
+                actions.append({"action": HabitatSimActions.TURN_LEFT})
+            outputs = self.envs.step(actions)
+            obs, _, dones, infos = [list(x) for x in zip(*outputs)]
+            batch_obs = self._batch_obs(obs)
+            poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
+            self.mapping_module(batch_obs, poses)
+            one_step_full_map, full_pose = self.mapping_module.update_map(step, self.detected_classes)
+            self.mapping_module.one_step_full_map.fill_(0.)
+            self.mapping_module.one_step_local_map.fill_(0.)
+            
+            blip_value = self.value_map.get_blip_value(Image.fromarray(obs[0]['rgb']), 
+                                                       "The Giraffi in the living room.")
+            blip_value = blip_value.detach().cpu().numpy()
+            self.value_map(step, one_step_full_map[0], 1.0, full_pose[0])
+    
+    def rollout(self):
+        """
+        execute a whole episode which consists of a sequence of sub-steps
+        """
+        self._look_around()
+        print("\n ========== START TO NAVIGATE ==========\n")
+        
+        for step in range(12, 50):
             actions = []
             for _ in range(self.config.NUM_ENVIRONMENTS):
                 actions.append(self._random_policy())
@@ -245,8 +281,15 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             obs, _, dones, infos = [list(x) for x in zip(*outputs)]
             batch_obs = self._batch_obs(obs)
             poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
-            _, local_map, _, local_pose = self.mapping_module(batch_obs, poses)
-            self.mapping_module.update_map(step, self.detected_classes)
+            self.mapping_module(batch_obs, poses)
+            one_step_full_map, full_pose = self.mapping_module.update_map(step, self.detected_classes)
+            self.mapping_module.one_step_full_map.fill_(0.)
+            self.mapping_module.one_step_local_map.fill_(0.)
+            
+            blip_value = self.value_map.get_blip_value(Image.fromarray(obs[0]['rgb']), 
+                                                       "The Giraffi in the living room.")
+            blip_value = blip_value.detach().cpu().numpy()
+            self.value_map(step, one_step_full_map[0], 1.0, full_pose[0])
     
     def eval(self):
         self._set_eval_config()
