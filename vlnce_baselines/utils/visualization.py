@@ -64,8 +64,9 @@ def init_vis_image():
     
     vis_image = add_class(vis_image, 0, "out of map", legend_color_palette)
     vis_image = add_class(vis_image, 1, "obstacle", legend_color_palette)
-    vis_image = add_class(vis_image, 2, "agent trajecy", legend_color_palette)
-    vis_image = add_class(vis_image, 3, "waypoint", legend_color_palette)
+    vis_image = add_class(vis_image, 2, "free space", legend_color_palette)
+    vis_image = add_class(vis_image, 3, "agent trajecy", legend_color_palette)
+    vis_image = add_class(vis_image, 4, "waypoint", legend_color_palette)
 
     return vis_image
 

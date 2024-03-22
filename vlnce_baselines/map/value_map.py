@@ -15,7 +15,7 @@ from typing import Union, Tuple, List
 from lavis.models import load_model_and_preprocess
 
 from vlnce_baselines.utils.map_utils import *
-from vlnce_baselines.utils.visualization import add_text
+from vlnce_baselines.utils.visualization import *
 
 
 class ValueMap(nn.Module):
@@ -37,7 +37,7 @@ class ValueMap(nn.Module):
         self.radius = config.TASK_CONFIG.SIMULATOR.DEPTH_SENSOR.MAX_DEPTH
         self.device = (torch.device("cuda", self.config.TORCH_GPU_ID) if 
                        torch.cuda.is_available() else torch.device("cpu"))
-        self.vis_image = np.ones((580, 480 * 3 + 20 * 4)).astype(np.uint8) * 255
+        self.vis_image = np.ones((580, 480 * 3 + 20 * 4, 3)).astype(np.uint8) * 255
         self._load_model_from_disk()
     
     def _create_model(self):
@@ -81,7 +81,10 @@ class ValueMap(nn.Module):
         return np.degrees(angle)
 
     def _create_sector_mask(self, position: Sequence, heading: float):
-        # mask = np.zeros(shape)
+        """ 
+        arg "position" came from full pose, full pose use standard Cartesian coordinate.
+        """
+        mask = np.zeros(self.shape)
         confidence_mask = np.zeros(self.shape)
         heading = (360 - heading) % 360
         angle_high = (heading + 79.0 / 2) % 360
@@ -90,7 +93,7 @@ class ValueMap(nn.Module):
         heading_vector = self._angle_to_vector(heading)
 
         y, x = np.meshgrid(np.arange(self.shape[0]) - position[0], np.arange(self.shape[1]) - position[1])
-        x = np.flipud(x)
+        # x = np.flipud(x)
         distance = np.sqrt(x**2 + y**2)
         angle = np.arctan2(x, y) * 180 / np.pi
         angle = (360 - angle) % 360
@@ -105,25 +108,32 @@ class ValueMap(nn.Module):
             valid_angle = (angle_low <= angle) & (angle <= angle_high)
         else:
             valid_angle = (angle_low <= angle) | (angle <= angle_high)
-        # mask[valid_distance & valid_angle] = 1
+        mask[valid_distance & valid_angle] = 1
         confidence_mask[valid_distance & valid_angle] = confidence[valid_distance & valid_angle]
 
-        return confidence_mask
+        return mask, confidence_mask
 
     def _update_value_map(self, 
                           prev_value: np.ndarray, 
                           curr_value: np.ndarray, 
                           prev_confidence: np.ndarray, 
-                          curr_confidence: np.ndarray) -> np.ndarray:
+                          curr_confidence: np.ndarray,
+                          mask: np.ndarray) -> np.ndarray:
         # import pdb;pdb.set_trace()
-        new_value = curr_confidence * curr_value + prev_confidence * prev_value
-        new_confidence = curr_confidence**2 + prev_confidence**2
-        partion = curr_confidence + prev_confidence
+        new_map_mask = np.logical_and(curr_confidence < 0.35, curr_confidence < prev_confidence)
+        curr_confidence[new_map_mask] = 0.0
+        new_value = curr_confidence * curr_value * self.current_floor + prev_confidence * prev_value
+        new_confidence = (self.current_floor * curr_confidence)**2 + prev_confidence**2
+        partion = curr_confidence * self.current_floor + prev_confidence
         partion[partion == 0] = np.inf
         new_value /= partion
         new_confidence /= partion
+        # new_value[new_map_mask] = 0.0
         self.value_map[0] = new_confidence
-        self.value_map[1] += new_value * self.current_floor
+        self.value_map[1] = new_value
+        # update_value = new_value * self.current_floor
+        # update_mask = prev_value < update_value
+        # self.value_map[1, update_mask] = update_value[update_mask]
     
     def forward(self,
                 step: int,
@@ -141,24 +151,32 @@ class ValueMap(nn.Module):
         self.current_floor = process_floor(one_step_full_map, kernel_size=3)
         position = full_pose[:2] * (100 / self.resolution)
         heading = full_pose[-1]
-        confidence_mask = self._create_sector_mask(position, heading)
+        mask, confidence_mask = self._create_sector_mask(position, heading)
         current_confidence = confidence_mask
         previous_confidence = self.value_map[0]
         current_value = blip_value
         previous_value = self.value_map[1]
-        self._update_value_map(previous_value, current_value, previous_confidence, current_confidence)
-        
+        self._update_value_map(previous_value, current_value, previous_confidence, current_confidence, mask)
         if self.visualize:
             self._visualize(step)
         
     
     def _visualize(self, step):
         confidence_mask_vis = cv2.convertScaleAbs(self.value_map[0] * 255)
-        value_map_vis = cv2.convertScaleAbs(self.value_map[1] * 255)
+        confidence_mask_vis = np.stack((confidence_mask_vis,) * 3, axis=-1)
+        # value_map_vis = cv2.convertScaleAbs(self.value_map[1] * 255)
+        value_map_vis = self.value_map[1]
+        
+        min_val = np.min(value_map_vis)
+        max_val = np.max(value_map_vis)
+        normalized_values = (value_map_vis - min_val) / (max_val - min_val)
+        normalized_values[value_map_vis == 0] = 1
+        value_map_vis = cv2.applyColorMap((normalized_values* 255).astype(np.uint8), cv2.COLORMAP_HOT)
         floor_vis = cv2.convertScaleAbs(self.current_floor * 255)
-        self.vis_image[80 : 560, 20 : 500] = floor_vis
-        self.vis_image[80: 560, 520 : 1000] = confidence_mask_vis
-        self.vis_image[80: 560, 1020: 1500] = value_map_vis
+        floor_vis = np.stack((floor_vis,) * 3, axis=-1)
+        self.vis_image[80 : 560, 20 : 500] = np.flipud(floor_vis)
+        self.vis_image[80: 560, 520 : 1000] = np.flipud(confidence_mask_vis)
+        self.vis_image[80: 560, 1020: 1500] = np.flipud(value_map_vis)
         
         self.vis_image = add_text(self.vis_image, "Floor", (20, 50))
         self.vis_image = add_text(self.vis_image, "Confidence Mask", (520, 50))
@@ -168,5 +186,5 @@ class ValueMap(nn.Module):
         cv2.waitKey(1)
         
         if self.print_images:
-            fn = "{}/step-{}.png".format("data/logs/eval_results/exp1/vis_value_map", step)
+            fn = "{}/step-{}.png".format("data/logs/eval_results/exp1/floor_confidence_value", step)
             cv2.imwrite(fn, self.vis_image)

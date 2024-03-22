@@ -9,8 +9,10 @@ https://github.com/devendrachaplot/Object-Goal-Navigation/tree/master
 
 import os
 import cv2
+import copy
 import numpy as np
 from PIL import Image
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -19,9 +21,9 @@ from torch.nn import functional as F
 
 import habitat_extensions.pose_utils as pu
 
+from vlnce_baselines.utils.map_utils import *
 import vlnce_baselines.utils.depth_utils as du
 import vlnce_baselines.utils.visualization as vu
-from vlnce_baselines.utils.map_utils import get_grid
 from vlnce_baselines.utils.data_utils import OrderedSet
 from vlnce_baselines.utils.constant import color_palette
 from vlnce_baselines.utils.constant import legend_color_palette
@@ -229,7 +231,6 @@ class Semantic_Mapping(nn.Module):
         # map_size_cm = 2400
         # full_pos[0]: [x=12m, y=12m, ori=0], agent always start at the center of the map
         self.full_pose[:, :2] = self.args.MAP_SIZE_CM / 100.0 / 2.0
-        print("init full pose: ", self.full_pose)
 
         locs = self.full_pose.cpu().numpy()
         self.state[:, :3] = locs # state: [x,y,z,gx1,gx2,gy1,gy2]
@@ -319,20 +320,18 @@ class Semantic_Mapping(nn.Module):
                                         self.lmb[e, 2]:self.lmb[e, 3]]
                 self.local_pose[e] = self.full_pose[e] - \
                     torch.from_numpy(self.origins[e]).to(self.device).float()
+        frontiers = find_frontiers(self.full_map[0].cpu().numpy())
+        # plt.imshow(np.flipud(frontiers))
+        # plt.savefig("/data/ckh/Zero-Shot-VLN-FusionMap/data/logs/eval_results/exp1/frontiers/frontier_%d.png"%step)
                 
         if self.visualize:
             self._visualize(id=0, 
                             goal=self.goal, 
                             detected_classes=detected_classes,
                             step=step)
-        # torch.save(self.one_step_local_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/one_step_maps/one_step_map%d.pt"%step)
-        torch.save(self.one_step_full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/left_maps/one_step_full_map%d.pt"%step)
-        # self.one_step_local_map.fill_(0.)
-        # self.one_step_full_map.fill_(0.)
-        torch.save(self.full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/left_maps/full_map%d.pt"%step)
-        # torch.save(self.local_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/local_maps3/local_map%d.pt"%step)
+        # torch.save(self.full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/full_maps/full_map%d.pt"%step)
         
-        return self.one_step_full_map.cpu().numpy(), self.full_pose.cpu().numpy()
+        return self.full_map.cpu().numpy(), self.full_pose.cpu().numpy(), frontiers
     
     def _visualize(self, 
                    id: int, 
@@ -352,11 +351,12 @@ class Semantic_Mapping(nn.Module):
         
         # the last item of detected_class is always "not_a_cat"
         if len(detected_classes[:-1]) > len(self.vis_classes):
-            for i in range(len(detected_classes[:-1]) - len(self.vis_classes)):
+            vis_classes = copy.deepcopy(self.vis_classes)
+            for i in range(len(detected_classes[:-1]) - len(vis_classes)):
                 self.vis_image = vu.add_class(
                     self.vis_image, 
-                    4 + len(self.vis_classes) + i, 
-                    detected_classes[i + len(self.vis_classes)], 
+                    5 + len(vis_classes) + i, 
+                    detected_classes[i + len(vis_classes)], 
                     legend_color_palette)
                 self.vis_classes.append(detected_classes[i])
         
@@ -391,8 +391,8 @@ class Semantic_Mapping(nn.Module):
         semantic_map += 5
         not_cat_id = local_maps.shape[1]
         not_cat_mask = (semantic_map == not_cat_id)
-        obstacle_map_mask = np.rint(obstacle_map)
-        explored_map_mask = np.rint(explored_map)
+        obstacle_map_mask = np.rint(obstacle_map) == 1
+        explored_map_mask = np.rint(explored_map) == 1
         
         semantic_map[not_cat_mask] = 0
         
@@ -419,6 +419,7 @@ class Semantic_Mapping(nn.Module):
         # flip image up and down, so that agnet's turn in simulator 
         # is the same as its turn in semantic map visualization
         sem_map_vis = np.flipud(sem_map_vis)
+        # sem_map_vis = np.array(sem_map_vis)
         sem_map_vis = sem_map_vis[:, :, [2, 1, 0]] # turn to bgr for opencv
         sem_map_vis = cv2.resize(sem_map_vis, (480, 480), interpolation=cv2.INTER_NEAREST)
         self.vis_image[50:530, 15:655] = self.rgb_vis # 480, 640
@@ -444,7 +445,7 @@ class Semantic_Mapping(nn.Module):
             fn = "{}/step-{}.png".format(save_dir, step)
             cv2.imwrite(fn, self.vis_image)
 
-    def forward(self, obs: np.ndarray, pose_obs):
+    def forward(self, obs: torch.Tensor, pose_obs: torch.Tensor):
         """
         Args:
             obs: (b, c, h, w), b = batch size, c = 3(RGB) + 1(Depth) + num_detected_categories
@@ -487,6 +488,8 @@ class Semantic_Mapping(nn.Module):
         
         # obs: [b, c, h*w] => [b, 17, 19200], feat is a tensor contains all predicted semantic features
         pool = nn.AvgPool2d(self.du_scale)
+        # obs[:, 4, ...] = 0.
+        self.min_z = int(25 / z_resolution - min_h)
         self.feat[:, 1:, :] = pool(obs[:, 4:, :, :]).view(bs, c - 4, h // self.du_scale * w // self.du_scale)
 
         # self.init_grid: [bs, categories + 1, x=vr, y=vr, z=(max_height - min_height)] => [bs, 17, 100, 100, 80]
@@ -494,10 +497,11 @@ class Semantic_Mapping(nn.Module):
         # XYZ_cm_std: point cloud in physical world, [bs, 3, 19200]
         # splat_feat_nd:
         assert self.init_grid.shape[1] == self.feat.shape[1], "init_grid and feat should have same number of channels!"
+        
         # shape: [bs, num_detected_classes + 1, 100, 100, 80]
         voxels = du.splat_feat_nd(self.init_grid * 0., self.feat, XYZ_cm_std).transpose(2, 3)
         max_z = int((self.agent_height + 1) / z_resolution - min_h) # int((88 + 1) / 5 - (-8))= 25
-
+        
         agent_height_proj = voxels[..., self.min_z:max_z].sum(4) # shape: [bs, num_detected_classes + 1, 100, 100]
         all_height_proj = voxels.sum(4) # shape: [bs, num_detected_classes + 1, 100, 100]
 
