@@ -321,17 +321,21 @@ class Semantic_Mapping(nn.Module):
                 self.local_pose[e] = self.full_pose[e] - \
                     torch.from_numpy(self.origins[e]).to(self.device).float()
         frontiers = find_frontiers(self.full_map[0].cpu().numpy())
-        # plt.imshow(np.flipud(frontiers))
-        # plt.savefig("/data/ckh/Zero-Shot-VLN-FusionMap/data/logs/eval_results/exp1/frontiers/frontier_%d.png"%step)
+        plt.imshow(np.flipud(frontiers))
+        plt.savefig("/data/ckh/Zero-Shot-VLN-FusionMap/data/logs/eval_results/exp1/frontiers/frontier_%d.png"%step)
                 
         if self.visualize:
             self._visualize(id=0, 
                             goal=self.goal, 
                             detected_classes=detected_classes,
                             step=step)
-        # torch.save(self.full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/full_maps/full_map%d.pt"%step)
+        torch.save(self.full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/full_maps/full_map%d.pt"%step)
+        torch.save(self.one_step_full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/one_step_full_maps/full_map%d.pt"%step)
         
-        return self.full_map.cpu().numpy(), self.full_pose.cpu().numpy(), frontiers
+        return (self.full_map.cpu().numpy(), 
+                self.full_pose.cpu().numpy(), 
+                frontiers, 
+                self.one_step_full_map.cpu().numpy())
     
     def _visualize(self, 
                    id: int, 

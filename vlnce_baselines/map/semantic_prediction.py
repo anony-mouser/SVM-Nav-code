@@ -84,7 +84,7 @@ class GroundedSAM(Segment):
             if class_id is not None:
                 labels.append(f"{classes[class_id]} {confidence:0.2f}")
             else:
-                labels.append(f"{classes[-1]} {confidence:0.2f}")
+                labels.append(f"unknow {confidence:0.2f}")
 
         # annotated_image.shape=(h,w,3)
         annotated_image = mask_annotator.annotate(scene=image.copy(), detections=detections)
@@ -92,7 +92,7 @@ class GroundedSAM(Segment):
         
         # detectins.mask.shape=[num_detected_classes, h, w]
         # attention: sometimes the model can't detect all classes, so num_detected_classes <= len(classes)
-        return (detections.mask.astype(np.float32), labels, annotated_image)
+        return (detections.mask.astype(np.float32), labels, annotated_image, detections)
     
 
 class BatchWrapper:

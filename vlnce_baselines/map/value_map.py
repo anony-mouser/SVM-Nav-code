@@ -137,7 +137,7 @@ class ValueMap(nn.Module):
     
     def forward(self,
                 step: int,
-                one_step_full_map: np.ndarray, 
+                full_map: np.ndarray, 
                 blip_value: np.ndarray,
                 full_pose: Sequence):
         """project cosine similarity to floor
@@ -148,7 +148,8 @@ class ValueMap(nn.Module):
                                   no batch dimension
             value (torch.Tensor): torch.size([1,1]) on device
         """
-        self.current_floor = process_floor(one_step_full_map, kernel_size=3)
+        # self.current_floor = process_floor(full_map, kernel_size=3)
+        self.current_floor = get_floor_area(full_map)
         position = full_pose[:2] * (100 / self.resolution)
         heading = full_pose[-1]
         mask, confidence_mask = self._create_sector_mask(position, heading)

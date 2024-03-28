@@ -22,6 +22,7 @@ _C.RESULTS_DIR = "data/checkpoints/pretrained/evals"
 _C.BLIP2_MODEL_DIR = "data/blip2/blip2_model.pt"
 _C.BLIP2_VIS_PROCESSORS_DIR = "data/blip2/blip2_vis_processors.pt"
 _C.BLIP2_TEXT_PROCESSORS_DIR = "data/blip2/blip2_text_processors.pt"
+_C.KEYBOARD_CONTROL = 0
 
 # -----------------------------------------------------------------------------
 # MAP CONFIG
@@ -31,7 +32,7 @@ _C.MAP.GROUNDING_DINO_CONFIG_PATH = "data/grounded_sam/GroundingDINO_SwinT_OGC.p
 _C.MAP.GROUNDING_DINO_CHECKPOINT_PATH = "data/grounded_sam/groundingdino_swint_ogc.pth"
 _C.MAP.SAM_CHECKPOINT_PATH = "data/grounded_sam/sam_vit_h_4b8939.pth"
 _C.MAP.SAM_ENCODER_VERSION = "vit_h"
-_C.MAP.BOX_THRESHOLD = 0.30
+_C.MAP.BOX_THRESHOLD = 0.35
 _C.MAP.TEXT_THRESHOLD = 0.25
 _C.MAP.FRAME_WIDTH = 160
 _C.MAP.FRAME_HEIGHT = 120
@@ -57,6 +58,7 @@ _C.EVAL = CN()
 _C.EVAL.SPLIT = "val_unseen"  # The split to evaluate on
 _C.EVAL.USE_CKPT_CONFIG = True
 _C.EVAL.EPISODE_COUNT = 5000
+_C.EVAL.SAVE_RESULTS = True
 
 
 def purge_keys(config: CN, keys: List[str]) -> None:

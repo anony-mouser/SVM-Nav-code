@@ -72,7 +72,7 @@ class FMMPlanner:
         subset = dist[x - 5 : x + 6, y - 5: y + 6]
         subset *= mask
         subset += (1 - mask) * 1e5
-        if subset[5, 5] < 0.25 * 100 / 5:
+        if subset[5, 5] < 0.5 * 100 / 5:
             stop = True
         else:
             stop = False

@@ -69,20 +69,26 @@ _C.TASK.ORACLE_NAVIGATION_ERROR.TYPE = "OracleNavigationError"
 # -----------------------------------------------------------------------------
 _C.TASK.ORACLE_SUCCESS = CN()
 _C.TASK.ORACLE_SUCCESS.TYPE = "OracleSuccess"
-_C.TASK.ORACLE_SUCCESS.SUCCESS_DISTANCE = 0.2
+_C.TASK.ORACLE_SUCCESS.SUCCESS_DISTANCE = 3.0
 
 # -----------------------------------------------------------------------------
 # ORACLE_SPL MEASUREMENT
 # -----------------------------------------------------------------------------
 _C.TASK.ORACLE_SPL = CN()
 _C.TASK.ORACLE_SPL.TYPE = "OracleSPL"
-_C.TASK.ORACLE_SPL.SUCCESS_DISTANCE = 0.2
+_C.TASK.ORACLE_SPL.SUCCESS_DISTANCE = 3.0
 
 # -----------------------------------------------------------------------------
 # STEPS_TAKEN MEASUREMENT
 # -----------------------------------------------------------------------------
 _C.TASK.STEPS_TAKEN = CN()
 _C.TASK.STEPS_TAKEN.TYPE = "StepsTaken"
+
+# ----------------------------------------------------------------------------
+# POSITION MEASUREMENT For faster eval
+# ----------------------------------------------------------------------------
+_C.TASK.POSITION = CN()
+_C.TASK.POSITION.TYPE = 'Position'
 
 _C.DATASET.split_num = 0
 _C.DATASET.split_rank = 0

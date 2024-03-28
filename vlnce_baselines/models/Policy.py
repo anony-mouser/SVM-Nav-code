@@ -1,20 +1,21 @@
 """
-Design a policy net to combine different maps then decide a waypoint
+Design a policy to combine different maps then decide action
 """
-
+import matplotlib.pyplot as plt
 import cv2
 import torch
 import numpy as np
 import torch.nn as nn
 from typing import List
+import supervision as sv
 from collections import Sequence
-from skimage.morphology import remove_small_objects
 
 from habitat import Config
 
 from vlnce_baselines.utils.map_utils import *
+from vlnce_baselines.utils.data_utils import OrderedSet
 from vlnce_baselines.models.fmm_planner import FMMPlanner
-from vlnce_baselines.utils.acyclic_enforcer import AcyclicEnforcer
+from vlnce_baselines.models.frontier_policy import FrontierPolicy
 
 
 class FusionMapPolicy(nn.Module):
@@ -33,88 +34,14 @@ class FusionMapPolicy(nn.Module):
             else torch.device("cpu")
         )
         
+        self.frontier_policy = FrontierPolicy()
+        
     def reset(self) -> None:
-        self._acyclic_enforcer = AcyclicEnforcer()
-        self._last_value = float("-inf")
-        self._last_waypoint = np.zeros(2)
-        self.waypoint = []
+        self.frontier_policy.reset()
+        self.max_destination_confidence = -1.
         self.vis_image = np.ones((self.map_shape, self.map_shape, 3)).astype(np.uint8) * 255
-        
-    def _get_waypoint(self, value_map: np.ndarray) -> List:
-        ret, thresh = cv2.threshold(value_map, 0.1, 1.0, cv2.THRESH_BINARY)
-        thresh = remove_small_objects(thresh.astype(bool), min_size=180).astype(np.uint8)
-        nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(thresh, connectivity=8)
-        
-        avg_values = []
-        for i in range(1, nb_components):
-            tmp = value_map * (output == i)
-            avg_value = tmp.sum() / (tmp != 0).sum()
-            avg_values.append((i, avg_value))
-        avg_values = sorted(avg_values, key=lambda x: x[1], reverse=True)
-        
-        if len(avg_values) >= 3000:
-            top_idx = [item[0] for item in avg_values[:3]]
-        else:
-            top_idx = [avg_values[0][0]]
-        top_centroids = centroids[top_idx]
-        waypoints = [(int(item[1]), int(item[0])) for item in top_centroids]
-        
-        return waypoints
     
-    def _sort_waypoints_by_value(self, frontiers: np.ndarray, value_map: np.ndarray) -> List:
-        nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(frontiers)
-        centroids = centroids[1:]
-        waypoints = [[int(item[1]), int(item[0])] for item in centroids]
-        waypoints_value = [[waypoint, value_map[waypoint[0], waypoint[1]]] for waypoint in waypoints]
-        waypoints_value = sorted(waypoints_value, key=lambda x: x[1], reverse=True)
-        sorted_waypoints = np.concatenate([[np.array(item[0])] for item in waypoints_value], axis=0)
-        sorted_values = [item[1] for item in waypoints_value]
-        
-        return sorted_waypoints, sorted_values
-    
-    def _get_best_waypoint(self, frontiers: np.ndarray, value_map: np.ndarray, position: np.ndarray):
-        sorted_waypoints, sorted_values = self._sort_waypoints_by_value(frontiers, value_map)
-        best_waypoint_idx = None
-        
-        if not np.array_equal(self._last_waypoint, np.zeros(2)):
-            curr_index = None
-            
-            for idx, waypoint in enumerate(sorted_waypoints):
-                if np.array_equal(waypoint, self._last_waypoint):
-                    curr_index = idx
-                    break
-            
-            if curr_index is None:
-                closest_index = closest_point_within_threshold(sorted_waypoints, self._last_waypoint, threshold=0.5)
-                if closest_index != -1:
-                    curr_index = closest_index
-            else:
-                curr_value = sorted_values[curr_index]
-                if curr_value + 0.01 > self._last_value:
-                    best_waypoint_idx = curr_index
-        
-        if best_waypoint_idx is None:
-            for idx, waypoint in enumerate(sorted_waypoints):
-                cyclic = self._acyclic_enforcer.check_cyclic(position, waypoint)
-                if cyclic:
-                    continue
-                best_waypoint_idx = idx
-                break
-        
-        if best_waypoint_idx is None:
-            print("All waypoints are cyclic! Choosing the closest one.")
-            best_waypoint_idx = max(range(len(sorted_waypoints)), 
-                                    key=lambda i: np.linalg.norm(sorted_waypoints[i] - position))
-        
-        best_waypoint = sorted_waypoints[best_waypoint_idx]
-        best_value = sorted_values[best_waypoint_idx]
-        self._acyclic_enforcer.add_state_action(position, best_waypoint)
-        self._last_value = best_value
-        self._last_waypoint = best_waypoint
-        
-        return best_waypoint, best_value, sorted_waypoints
-    
-    def _get_action(self, full_pose: Sequence, waypoint: np.ndarray, map: np.ndarray) -> int:
+    def _get_action(self, full_pose: Sequence, waypoint: np.ndarray, map: np.ndarray, step: int) -> int:
         """
         The coordinates among agent's pose in full_pose, agent's position in full_map, 
         agent's position in visualization are ignoring. And there're many np.flipud which
@@ -203,26 +130,96 @@ class FusionMapPolicy(nn.Module):
                             (np.max(planner.fmm_dist) - np.min(planner.fmm_dist)) * 255).astype(np.uint8)
             normalized_data = np.stack((normalized_data,) * 3, axis=-1)
             normalized_data = cv2.circle(normalized_data, (int(x), int(y)), radius=5, color=(255,0,0), thickness=2)
-            normalized_data = cv2.circle(normalized_data, (206, 302), radius=5, color=(0,0,255), thickness=2)
+            normalized_data = cv2.circle(normalized_data, (waypoint[1], waypoint[0]), 
+                                         radius=5, color=(0,0,255), thickness=2)
             cv2.imshow("fmm distance field", np.flipud(normalized_data))
             cv2.waitKey(1)
+        if self.print_images:
+            fn = "{}/step-{}.png".format("data/logs/eval_results/exp1/fmm_fields", step)
+            cv2.imwrite(fn, np.flipud(normalized_data))
         
         return action
-
+    
+    def _search_destination(self, 
+                            destination: str, 
+                            current_value: float,
+                            max_value: float,
+                            classes: List,
+                            detected_classes: OrderedSet, 
+                            one_step_full_map: np.ndarray, 
+                            full_map: np.ndarray, 
+                            current_detection: sv.Detections, step: int):
+        if destination not in detected_classes:
+            """ 
+            havn't detected destination
+            """
+            return None
+        
+        map_idx = detected_classes.index(destination)
+        destination_map = one_step_full_map[4 + map_idx]
+        class_idx = classes.index(destination)
+        class_ids = current_detection.class_id
+        confidences = current_detection.confidence
+        # masks = current_detection.mask
+        
+        if class_idx not in class_ids:
+            """ 
+            Agent have already seen the destination in the past but not detected it in current step
+            """
+            return None
+        
+        destination_ids = np.argwhere(class_ids == class_idx)
+        destination_confidences = confidences[destination_ids]
+        max_confidence_idx = np.argmax(destination_confidences)
+        max_idx = destination_ids[max_confidence_idx].item()
+        # destination_mask = masks[max_idx]
+        destination_confidence = confidences[max_idx]
+        if destination_confidence > self.max_destination_confidence:
+            self.max_destination_confidence = destination_confidence
+            
+        # plt.imshow(destination_mask)
+        # plt.savefig("/data/ckh/Zero-Shot-VLN-FusionMap/tests/destination_mask/mask%d.png"%step)
+        # np.save("/data/ckh/Zero-Shot-VLN-FusionMap/tests/destination_mask/mask%d.npy"%step, destination_mask)
+        
+        destination_waypoint = process_destination(destination_map, full_map)
+        confidence_part = destination_confidence / self.max_destination_confidence
+        value_part = current_value / max_value
+        score = (confidence_part + value_part) / 2.0
+        
+        if score >= 0.5 and current_value >= 0.25 and destination_waypoint is not None:
+            return destination_waypoint
+        else:
+            return None
+            
     def forward(self, 
                 value_map: np.ndarray, 
                 full_map: np.ndarray, 
                 full_pose: Sequence, 
                 frontiers: np.ndarray, 
+                destination: str, 
+                classes: List,
+                detected_classes: OrderedSet, 
+                one_step_full_map: np.ndarray, 
+                current_detection: sv.Detections, 
                 step: int):
         
         x, y, heading = full_pose
         x, y = x * (100 / self.resolution), y * (100 / self.resolution)
         position = np.array([x, y])
-        best_waypoint, best_value, sorted_waypoints = self._get_best_waypoint(frontiers, value_map, position)
+        best_waypoint, best_value, sorted_waypoints = self.frontier_policy(frontiers, value_map, position)
         print("===best waypoint: ", best_waypoint)
-        best_waypoint = np.array([302, 206])
-        action = self._get_action(full_pose, best_waypoint, full_map)
+        print("current_position's value: ", value_map[int(y), int(x)])
+        print("current pose: ", full_pose)
+        current_value = value_map[int(y), int(x)]
+        max_value = np.max(value_map)
+        destination_waypoint = self._search_destination(destination, current_value, max_value,
+                                 classes, detected_classes, 
+                                 one_step_full_map, full_map, current_detection, step)
+        if destination_waypoint is not None:
+            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!destination waypoint: ", destination_waypoint)
+            best_waypoint = destination_waypoint
+        # best_waypoint = np.array([302, 206])
+        action = self._get_action(full_pose, best_waypoint, full_map, step)
         
         if self.visualize:
             self._visualization(value_map, sorted_waypoints, best_waypoint, step)

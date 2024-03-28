@@ -1,12 +1,14 @@
 import cv2
 import torch
 import numpy as np
+from typing import Tuple
 import torch.nn.functional as F
 from collections import Sequence
-from skimage.morphology import remove_small_objects, closing, disk
+from scipy.spatial.distance import cdist
+from skimage.morphology import remove_small_objects, closing, disk, dilation
 
 
-def get_grid(pose, grid_size, device):
+def get_grid(pose: torch.Tensor, grid_size: Tuple, device: torch.device):
     """
     Input:
         `pose` FloatTensor(bs, 3)
@@ -92,7 +94,8 @@ def process_floor(map: np.ndarray, kernel_size: int=3) -> np.ndarray:
 
 
 def find_frontiers(map: np.ndarray) -> np.ndarray:
-    floor = process_floor(map)
+    # floor = process_floor(map)
+    floor = get_floor_area(map)
     explored_area = get_explored_area(map)
     contours, _ = cv2.findContours(explored_area.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     image = np.zeros(map.shape[-2:], dtype=np.uint8)
@@ -101,6 +104,48 @@ def find_frontiers(map: np.ndarray) -> np.ndarray:
     res = remove_small_objects(res.astype(bool), min_size=30)
     
     return res.astype(np.uint8)
+
+
+def get_traversible_area(map: np.ndarray) -> np.ndarray:
+    objects = get_objects(map)
+    obstacles = get_obstacle(map)
+    traversible = 1 - (objects + obstacles)
+    traversible_area = np.sum(traversible)
+    nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(traversible.astype(np.uint8))
+    if nb_components > 2:
+        areas = [np.sum(output == i) for i in range(1, nb_components)]
+        left_areas = [traversible_area - item for item in areas]
+        min_idx = left_areas.index(min(left_areas)) + 1
+        res = np.ones(map.shape[-2:])
+        for i in range(nb_components):
+            if i != min_idx:    
+                res[output == i] = 0
+        return res
+    else:
+        return traversible
+
+def get_floor_area(map: np.ndarray) -> np.ndarray:
+    traversible = get_traversible_area(map)
+    floor = process_floor(map)
+    res = np.logical_xor(floor, traversible)
+    res = remove_small_objects(res, min_size=100)
+    nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(res.astype(np.uint8))
+    if nb_components > 2:
+        areas = [np.sum(output == i) for i in range(1, nb_components)]
+        max_id = areas.index(max(areas)) + 1
+        for i in range(1, nb_components):
+            if i != max_id:
+                floor = np.logical_or(floor, output==i)
+                
+    return floor.astype(bool)
+
+
+def get_nearest_nonzero_waypoint(arr: np.ndarray, start: Sequence) -> np.ndarray:
+    nonzero_indices = np.argwhere(arr != 0)
+    distances = cdist([start], nonzero_indices)
+    nearest_index = np.argmin(distances)
+    
+    return np.array(nonzero_indices[nearest_index])
 
 
 def angle_between_vectors(vector1: np.ndarray, vector2: np.ndarray) -> np.ndarray:
@@ -112,7 +157,7 @@ def angle_between_vectors(vector1: np.ndarray, vector2: np.ndarray) -> np.ndarra
     return np.degrees(angle)
 
 
-def angle_to_vector(angle: float):
+def angle_to_vector(angle: float) -> np.ndarray:
     angle_rad = np.radians(angle)
     x = np.cos(angle_rad)
     y = np.sin(angle_rad)
@@ -120,13 +165,13 @@ def angle_to_vector(angle: float):
     return np.array([x, y])
 
 
-def change_to_Cartesian_coordinates(point: Sequence, x_shape):
+def change_to_Cartesian_coordinates(point: Sequence, x_shape) -> np.ndarray:
     x, y = point
     
     return np.array([y, x_shape - x])
 
 
-def array_coord_to_cartesian_coord(point: np.array, x_shape: int):
+def array_coord_to_cartesian_coord(point: np.ndarray, x_shape: int) -> np.ndarray:
     x, y = point
     flipud_x = x_shape - x
     flipud_y = y
@@ -134,7 +179,22 @@ def array_coord_to_cartesian_coord(point: np.array, x_shape: int):
     return np.array([flipud_y, flipud_x])
 
 
-def angle_and_direction(a: np.ndarray, b: np.ndarray, turn_angle: float):
+def process_destination(destination: np.ndarray, full_map: np.ndarray) -> np.ndarray:
+    floor = process_floor(full_map)
+    traversible = get_traversible_area(full_map)
+    destination = remove_small_objects(destination.astype(bool), min_size=30).astype(np.uint8)
+    destination = dilation(destination, selem=disk(5))
+    nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(destination)
+    if len(centroids) > 1:
+        centroid = centroids[1] # the first one is background
+        waypoint = np.array([int(centroid[1]), int(centroid[0])])
+        waypoint = get_nearest_nonzero_waypoint(np.logical_and(floor, traversible), waypoint)
+        return waypoint
+    else:
+        return None
+
+
+def angle_and_direction(a: np.ndarray, b: np.ndarray, turn_angle: float) -> Tuple:
     unit_a = a / np.linalg.norm(a)
     unit_b = b / np.linalg.norm(b)
     
@@ -180,6 +240,14 @@ def closest_point_within_threshold(points_array: np.ndarray, target_point: np.nd
         return int(closest_index)
 
     return -1
+
+
+# def get_traversible_area(map: np.ndarray) -> np.ndarray:
+#     objects = get_objects(map)
+#     obstacles = get_obstacle(map)
+#     traversible = 1 - (objects + obstacles)
+
+#     return traversible
 
 
 # def get_obstacle(map: np.ndarray, kernel_size: int=3) -> np.ndarray:
