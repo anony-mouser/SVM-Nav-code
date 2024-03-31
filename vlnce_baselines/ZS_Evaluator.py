@@ -348,6 +348,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
                     actions.append(self._action)
             outputs = self.envs.step(actions)
             obs, _, dones, infos = [list(x) for x in zip(*outputs)]
+            import pdb;pdb.set_trace()
             if dones[0]:
                 self._calculate_metric(infos)
                 break
