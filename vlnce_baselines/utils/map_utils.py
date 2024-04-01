@@ -142,10 +142,13 @@ def get_floor_area(map: np.ndarray) -> np.ndarray:
 
 def get_nearest_nonzero_waypoint(arr: np.ndarray, start: Sequence) -> np.ndarray:
     nonzero_indices = np.argwhere(arr != 0)
-    distances = cdist([start], nonzero_indices)
-    nearest_index = np.argmin(distances)
-    
-    return np.array(nonzero_indices[nearest_index])
+    if len(nonzero_indices) > 0:
+        distances = cdist([start], nonzero_indices)
+        nearest_index = np.argmin(distances)
+        
+        return np.array(nonzero_indices[nearest_index])
+    else:
+        return np.array([int(start[0]), int(start[1])])
 
 
 def angle_between_vectors(vector1: np.ndarray, vector2: np.ndarray) -> np.ndarray:

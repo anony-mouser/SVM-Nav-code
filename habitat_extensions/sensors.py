@@ -49,13 +49,13 @@ class SensorPoseSensor(Sensor):
     
 
 @registry.register_sensor
-class SubInstructionSensor(Sensor):
+class LLMSensor(Sensor):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         pass
     
     def _get_uuid(self, *args: Any, **kwargs: Any) -> str:
-        return "sub_instruction"
+        return "llm_reply"
     
     def _get_sensor_type(self, *args: Any, **kwargs: Any) -> SensorTypes:
         return SensorTypes.TEXT

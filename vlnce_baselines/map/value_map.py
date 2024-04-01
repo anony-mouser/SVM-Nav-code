@@ -3,6 +3,7 @@ Value map moudle aims to calcluate cosine similarity
 between current observation and destination description
 """
 
+import os
 import cv2
 import torch
 import torch.nn as nn
@@ -54,13 +55,6 @@ class ValueMap(nn.Module):
         self.model = torch.load(self.config.BLIP2_MODEL_DIR).to(self.device)
         self.vis_processors = torch.load(self.config.BLIP2_VIS_PROCESSORS_DIR)["eval"]
         self.text_processors = torch.load(self.config.BLIP2_TEXT_PROCESSORS_DIR)["eval"]
-            
-    def get_blip_value(self, image: Image, caption: str) -> torch.Tensor:
-        img = self.vis_processors(image).unsqueeze(0).to(self.device)
-        txt = self.text_processors(caption)
-        itc_score = self.model({"image": img, "text_input": txt}, match_head='itc')
-        
-        return itc_score
     
     def _calculate_confidence(self, theta: np.ndarray) -> np.float64:
         return (np.cos(0.5 * np.pi * theta / (self.hfov / 2)))**2
@@ -135,11 +129,23 @@ class ValueMap(nn.Module):
         # update_mask = prev_value < update_value
         # self.value_map[1, update_mask] = update_value[update_mask]
     
+    def reset(self) -> None:
+        self.value_map = np.zeros((2, *self.shape))
+        self.vis_image = np.ones((580, 480 * 3 + 20 * 4, 3)).astype(np.uint8) * 255
+    
+    def get_blip_value(self, image: Image, caption: str) -> torch.Tensor:
+        img = self.vis_processors(image).unsqueeze(0).to(self.device)
+        txt = self.text_processors(caption)
+        itc_score = self.model({"image": img, "text_input": txt}, match_head='itc')
+        
+        return itc_score
+    
     def forward(self,
                 step: int,
                 full_map: np.ndarray, 
                 blip_value: np.ndarray,
-                full_pose: Sequence):
+                full_pose: Sequence,
+                current_episode_id: int):
         """project cosine similarity to floor
 
         Args:
@@ -159,10 +165,10 @@ class ValueMap(nn.Module):
         previous_value = self.value_map[1]
         self._update_value_map(previous_value, current_value, previous_confidence, current_confidence, mask)
         if self.visualize:
-            self._visualize(step)
+            self._visualize(step, current_episode_id)
         
     
-    def _visualize(self, step):
+    def _visualize(self, step: int, current_episode_id: int):
         confidence_mask_vis = cv2.convertScaleAbs(self.value_map[0] * 255)
         confidence_mask_vis = np.stack((confidence_mask_vis,) * 3, axis=-1)
         # value_map_vis = cv2.convertScaleAbs(self.value_map[1] * 255)
@@ -170,7 +176,7 @@ class ValueMap(nn.Module):
         
         min_val = np.min(value_map_vis)
         max_val = np.max(value_map_vis)
-        normalized_values = (value_map_vis - min_val) / (max_val - min_val)
+        normalized_values = (value_map_vis - min_val) / (max_val - min_val + 1e-8)
         normalized_values[value_map_vis == 0] = 1
         value_map_vis = cv2.applyColorMap((normalized_values* 255).astype(np.uint8), cv2.COLORMAP_HOT)
         floor_vis = cv2.convertScaleAbs(self.current_floor * 255)
@@ -187,5 +193,7 @@ class ValueMap(nn.Module):
         cv2.waitKey(1)
         
         if self.print_images:
-            fn = "{}/step-{}.png".format("data/logs/eval_results/exp1/floor_confidence_value", step)
+            save_dir = os.path.join(self.config.RESULTS_DIR, "floor_confidence_value/eps_%d"%current_episode_id)
+            os.makedirs(save_dir, exist_ok=True)
+            fn = "{}/step-{}.png".format(save_dir, step)
             cv2.imwrite(fn, self.vis_image)

@@ -1,7 +1,7 @@
 """
 Design a policy to combine different maps then decide action
 """
-import matplotlib.pyplot as plt
+import os
 import cv2
 import torch
 import numpy as np
@@ -41,7 +41,12 @@ class FusionMapPolicy(nn.Module):
         self.max_destination_confidence = -1.
         self.vis_image = np.ones((self.map_shape, self.map_shape, 3)).astype(np.uint8) * 255
     
-    def _get_action(self, full_pose: Sequence, waypoint: np.ndarray, map: np.ndarray, step: int) -> int:
+    def _get_action(self, 
+                    full_pose: Sequence, 
+                    waypoint: np.ndarray, 
+                    map: np.ndarray, 
+                    step: int,
+                    current_episode_id: int) -> int:
         """
         The coordinates among agent's pose in full_pose, agent's position in full_map, 
         agent's position in visualization are ignoring. And there're many np.flipud which
@@ -135,7 +140,9 @@ class FusionMapPolicy(nn.Module):
             cv2.imshow("fmm distance field", np.flipud(normalized_data))
             cv2.waitKey(1)
         if self.print_images:
-            fn = "{}/step-{}.png".format("data/logs/eval_results/exp1/fmm_fields", step)
+            save_dir = os.path.join(self.config.RESULTS_DIR, "fmm_fields/eps_%d"%current_episode_id)
+            os.makedirs(save_dir, exist_ok=True)
+            fn = "{}/step-{}.png".format(save_dir, step)
             cv2.imwrite(fn, np.flipud(normalized_data))
         
         return action
@@ -201,11 +208,12 @@ class FusionMapPolicy(nn.Module):
                 detected_classes: OrderedSet, 
                 one_step_full_map: np.ndarray, 
                 current_detection: sv.Detections, 
+                current_episode_id: int,
                 step: int):
         
         x, y, heading = full_pose
         x, y = x * (100 / self.resolution), y * (100 / self.resolution)
-        position = np.array([x, y])
+        position = np.array([y, x])
         best_waypoint, best_value, sorted_waypoints = self.frontier_policy(frontiers, value_map, position)
         print("===best waypoint: ", best_waypoint)
         print("current_position's value: ", value_map[int(y), int(x)])
@@ -219,10 +227,10 @@ class FusionMapPolicy(nn.Module):
             print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!destination waypoint: ", destination_waypoint)
             best_waypoint = destination_waypoint
         # best_waypoint = np.array([302, 206])
-        action = self._get_action(full_pose, best_waypoint, full_map, step)
+        action = self._get_action(full_pose, best_waypoint, full_map, step, current_episode_id)
         
         if self.visualize:
-            self._visualization(value_map, sorted_waypoints, best_waypoint, step)
+            self._visualization(value_map, sorted_waypoints, best_waypoint, step, current_episode_id)
         
         return {"action": action}
     
@@ -230,7 +238,8 @@ class FusionMapPolicy(nn.Module):
                        value_map: np.ndarray, 
                        waypoints: np.ndarray, 
                        best_waypoint: np.ndarray, 
-                       step: int):
+                       step: int,
+                       current_episode_id: int):
         
         min_val = np.min(value_map)
         max_val = np.max(value_map)
@@ -252,5 +261,7 @@ class FusionMapPolicy(nn.Module):
         cv2.waitKey(1)
         
         if self.print_images:
-            fn = "{}/step-{}.png".format("data/logs/eval_results/exp1/waypoints", step)
+            save_dir = os.path.join(self.config.RESULTS_DIR, "waypoints/eps_%d"%current_episode_id)
+            os.makedirs(save_dir, exist_ok=True)
+            fn = "{}/step-{}.png".format(save_dir, step)
             cv2.imwrite(fn, self.vis_image)

@@ -33,7 +33,7 @@ TASK:
   SENSORS: [
     INSTRUCTION_SENSOR,
     SENSOR_POSE_SENSOR,
-    SUB_INSTRUCTION_SENSOR,
+    LLM_SENSOR,
     POSITION_SENSOR,
     HEADING_SENSOR
   ]
@@ -66,4 +66,4 @@ DATASET:
   SPLIT: val_unseen
   DATA_PATH: data/datasets/R2R_VLNCE_v1-3_preprocessed/{split}/{split}.json.gz
   SCENES_DIR: data/scene_datasets/
-  LLM_REPLYS_PATH: /data/ckh/Zero-Shot-VLN-FusionMap/tests/llm_reply.json
+  LLM_REPLYS_PATH: data/datasets/LLM_REPLYS/llm_reply_valunseen36.json

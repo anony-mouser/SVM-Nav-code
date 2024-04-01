@@ -100,6 +100,18 @@ class Semantic_Mapping(nn.Module):
             args.NUM_ENVIRONMENTS, 1, self.screen_h // self.du_scale * self.screen_w // self.du_scale
         ).float().to(self.device)
     
+    def reset(self) -> None:
+        self.curr_loc = None
+        self.last_loc = None
+        self.vis_classes = []
+        self.feat = torch.ones(
+            self.args.NUM_ENVIRONMENTS, 1, self.screen_h // self.du_scale * self.screen_w // self.du_scale
+        ).float().to(self.device)
+        
+        if self.visualize or self.print_images:
+            self.vis_image = vu.init_vis_image()
+            self.rgb_vis = None
+    
     def _dynamic_process(self, num_detected_classes: int) -> None:
         vr = self.vision_range
         self.init_grid = torch.zeros(
@@ -267,7 +279,7 @@ class Semantic_Mapping(nn.Module):
             self.curr_loc[e] = self.full_pose[e] - \
                 torch.from_numpy(self.origins[e]).to(self.device).float()
                                 
-    def update_map(self, step: int, detected_classes: OrderedSet) -> None:
+    def update_map(self, step: int, detected_classes: OrderedSet, current_episode_id: int) -> None:
         if step == 0:
             self.last_loc = self.state[:, :3]
         else:
@@ -321,16 +333,21 @@ class Semantic_Mapping(nn.Module):
                 self.local_pose[e] = self.full_pose[e] - \
                     torch.from_numpy(self.origins[e]).to(self.device).float()
         frontiers = find_frontiers(self.full_map[0].cpu().numpy())
-        plt.imshow(np.flipud(frontiers))
-        plt.savefig("/data/ckh/Zero-Shot-VLN-FusionMap/data/logs/eval_results/exp1/frontiers/frontier_%d.png"%step)
+        if self.print_images:
+            plt.imshow(np.flipud(frontiers))
+            save_dir = os.path.join(self.args.RESULTS_DIR, "frontiers/eps_%d"%current_episode_id)
+            os.makedirs(save_dir, exist_ok=True)
+            fn = "{}/step-{}.png".format(save_dir, step)
+            plt.savefig(fn)
                 
         if self.visualize:
-            self._visualize(id=0, 
+            self._visualize(current_episode_id, 
+                            id=0,
                             goal=self.goal, 
                             detected_classes=detected_classes,
                             step=step)
-        torch.save(self.full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/full_maps/full_map%d.pt"%step)
-        torch.save(self.one_step_full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/one_step_full_maps/full_map%d.pt"%step)
+        # torch.save(self.full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/full_maps/full_map%d.pt"%step)
+        # torch.save(self.one_step_full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/one_step_full_maps/full_map%d.pt"%step)
         
         return (self.full_map.cpu().numpy(), 
                 self.full_pose.cpu().numpy(), 
@@ -338,7 +355,8 @@ class Semantic_Mapping(nn.Module):
                 self.one_step_full_map.cpu().numpy())
     
     def _visualize(self, 
-                   id: int, 
+                   current_episode_id: int, 
+                   id: int=0,
                    goal: Tensor=None, 
                    detected_classes: OrderedSet=None,
                    step: int=None) -> None:
@@ -349,9 +367,6 @@ class Semantic_Mapping(nn.Module):
             it's resource consuming to render all environments together,
             so please only choose one environmet to visualize.
         """
-        result_dir = self.args.RESULTS_DIR
-        save_dir = "{}/visualization/eps_{}".format(result_dir, id)
-        os.makedirs(save_dir, exist_ok=True)
         
         # the last item of detected_class is always "not_a_cat"
         if len(detected_classes[:-1]) > len(self.vis_classes):
@@ -446,6 +461,9 @@ class Semantic_Mapping(nn.Module):
             cv2.waitKey(1)
             
         if self.print_images:
+            result_dir = self.args.RESULTS_DIR
+            save_dir = "{}/visualization/eps_{}".format(result_dir, current_episode_id)
+            os.makedirs(save_dir, exist_ok=True)
             fn = "{}/step-{}.png".format(save_dir, step)
             cv2.imwrite(fn, self.vis_image)
 
@@ -552,7 +570,7 @@ class Semantic_Mapping(nn.Module):
             pose[:, 2] = torch.fmod(pose[:, 2] + 180.0, 360.0) - 180.0
 
             return pose
-
+        
         current_poses = get_new_pose_batch(self.local_pose, corrected_pose)
         st_pose = current_poses.clone().detach()
 

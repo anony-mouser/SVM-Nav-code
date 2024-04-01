@@ -37,7 +37,7 @@ class FrontierPolicy(nn.Module):
         
         return waypoints
     
-    def _sort_waypoints_by_value(self, frontiers: np.ndarray, value_map: np.ndarray) -> List:
+    def _sort_waypoints_by_value(self, frontiers: np.ndarray, value_map: np.ndarray, position: np.ndarray) -> List:
         nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(frontiers)
         centroids = centroids[1:]
         tmp_waypoints = [[int(item[1]), int(item[0])] for item in centroids]
@@ -53,8 +53,12 @@ class FrontierPolicy(nn.Module):
                 waypoints.append(waypoint)
         waypoints_value = [[waypoint, value_map[waypoint[0], waypoint[1]]] for waypoint in waypoints]
         waypoints_value = sorted(waypoints_value, key=lambda x: x[1], reverse=True)
-        sorted_waypoints = np.concatenate([[np.array(item[0])] for item in waypoints_value], axis=0)
-        sorted_values = [item[1] for item in waypoints_value]
+        if len(waypoints_value) > 0:
+            sorted_waypoints = np.concatenate([[np.array(item[0])] for item in waypoints_value], axis=0)
+            sorted_values = [item[1] for item in waypoints_value]
+        else:
+            sorted_waypoints = np.expand_dims(position.astype(int), axis=0)
+            sorted_values = [value_map[int(position[0]), int(position[1])]]
         
         return sorted_waypoints, sorted_values
     
@@ -66,7 +70,7 @@ class FrontierPolicy(nn.Module):
         return np.array(nonzero_indices[nearest_index])
     
     def forward(self, frontiers: np.ndarray, value_map: np.ndarray, position: np.ndarray):
-        sorted_waypoints, sorted_values = self._sort_waypoints_by_value(frontiers, value_map)
+        sorted_waypoints, sorted_values = self._sort_waypoints_by_value(frontiers, value_map, position)
         best_waypoint, best_value, sorted_waypoints = \
             self.waypoint_selector(sorted_waypoints, sorted_values, position)
         

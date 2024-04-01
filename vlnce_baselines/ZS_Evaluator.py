@@ -50,11 +50,12 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             else torch.device("cpu")
         )
         
-        self.trans = transforms.Compose(
-            [transforms.ToPILImage(),
-             transforms.Resize((self.map_args.FRAME_HEIGHT, self.map_args.FRAME_WIDTH), # (120, 160)
-                               interpolation=Image.NEAREST)])
-    
+        self.trans = transforms.Compose([transforms.ToPILImage(), 
+                                         transforms.Resize(
+                                             (self.map_args.FRAME_HEIGHT, self.map_args.FRAME_WIDTH), 
+                                             interpolation=Image.NEAREST)
+                                        ])
+        self.current_episode_id = None
     # for tensorboard
     # @property
     # def flush_secs(self):
@@ -276,21 +277,31 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         
         return {"action": action}
 
+    def _process_llm_reply(self, obs: Observations):
+        llm_reply = obs['llm_reply']
+        destination = llm_reply['destination']
+        sub_instructions = llm_reply['sub-instructions']
+        sub_constraints = llm_reply['state-constraints']
+        decisions = llm_reply['decisions']
+        
+    
     def _maps_initialization(self):
         obs = self.envs.reset() #type(obs): list
         batch_obs = self._batch_obs(obs)
+        self.current_episode_id = self.envs.current_episodes()[0].episode_id
+        print("current episode id: ", self.current_episode_id)
         
         self.mapping_module.init_map_and_pose(num_detected_classes=len(self.detected_classes))
         poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
         self.mapping_module(batch_obs, poses)
-        full_map, full_pose, _, _ = self.mapping_module.update_map(0, self.detected_classes)
+        full_map, full_pose, _, _ = self.mapping_module.update_map(0, self.detected_classes, self.current_episode_id)
         self.mapping_module.one_step_full_map.fill_(0.)
         self.mapping_module.one_step_local_map.fill_(0.)
         
         blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), 
                                                    "The Giraffi in the living room.")
         blip_value = blip_value.detach().cpu().numpy()
-        self.value_map_module(0, full_map[0], blip_value, full_pose[0])
+        self.value_map_module(0, full_map[0], blip_value, full_pose[0], self.current_episode_id)
         
     def _look_around(self):
         print("\n========== LOOK AROUND ==========\n")
@@ -300,24 +311,25 @@ class ZeroShotVlnEvaluator(BaseTrainer):
                 actions.append({"action": HabitatSimActions.TURN_LEFT})
             outputs = self.envs.step(actions)
             obs, _, dones, infos = [list(x) for x in zip(*outputs)]
+            import pdb;pdb.set_trace()
             batch_obs = self._batch_obs(obs)
             poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
             self.mapping_module(batch_obs, poses)
             full_map, full_pose, frontiers, one_step_full_map = \
-                self.mapping_module.update_map(step, self.detected_classes)
+                self.mapping_module.update_map(step, self.detected_classes, self.current_episode_id)
             self.mapping_module.one_step_full_map.fill_(0.)
             self.mapping_module.one_step_local_map.fill_(0.)
             
             blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), 
                                                        "go through exercise room, then find the giraffi in the living room.")
             blip_value = blip_value.detach().cpu().numpy()
-            self.value_map_module(step, full_map[0], blip_value, full_pose[0])
-            torch.save(self.value_map_module.value_map[1], 
-                       "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
+            self.value_map_module(step, full_map[0], blip_value, full_pose[0], self.current_episode_id)
+            # torch.save(self.value_map_module.value_map[1], 
+            #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
             self._action = self.policy(self.value_map_module.value_map[1], 
                                        full_map[0], full_pose[0], frontiers, 
                                        self.classes[0], self.classes, self.detected_classes, 
-                                       one_step_full_map[0], self.current_detections, step)
+                                       one_step_full_map[0], self.current_detections, self.current_episode_id, step)
         # import pdb;pdb.set_trace()
     
     def _use_keyboard_control(self):
@@ -330,6 +342,11 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             return {"action": HabitatSimActions.TURN_RIGHT}
         else:
             return {"action": HabitatSimActions.STOP}
+    
+    def reset(self) -> None:
+        self.mapping_module.reset()
+        self.value_map_module.reset()
+        self.policy.reset()
     
     def rollout(self):
         """
@@ -348,7 +365,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
                     actions.append(self._action)
             outputs = self.envs.step(actions)
             obs, _, dones, infos = [list(x) for x in zip(*outputs)]
-            import pdb;pdb.set_trace()
+            # import pdb;pdb.set_trace()
             if dones[0]:
                 self._calculate_metric(infos)
                 break
@@ -356,20 +373,20 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
             self.mapping_module(batch_obs, poses)
             full_map, full_pose, frontiers, one_step_full_map = \
-                self.mapping_module.update_map(step, self.detected_classes)
+                self.mapping_module.update_map(step, self.detected_classes, self.current_episode_id)
             self.mapping_module.one_step_full_map.fill_(0.)
             self.mapping_module.one_step_local_map.fill_(0.)
             
             blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), 
                                                        "The Giraffi in the living room.")
             blip_value = blip_value.detach().cpu().numpy()
-            self.value_map_module(step, full_map[0], blip_value, full_pose[0])
-            torch.save(self.value_map_module.value_map[1], 
-                       "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
+            self.value_map_module(step, full_map[0], blip_value, full_pose[0], self.current_episode_id)
+            # torch.save(self.value_map_module.value_map[1], 
+            #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
             self._action = self.policy(self.value_map_module.value_map[1], 
                                        full_map[0], full_pose[0], frontiers, 
                                        self.classes[0], self.classes, self.detected_classes, 
-                                       one_step_full_map[0], self.current_detections, step)
+                                       one_step_full_map[0], self.current_detections, self.current_episode_id, step)
     
     def eval(self):
         self._set_eval_config()
@@ -387,6 +404,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         
         while len(self.state_eps) < eps_to_eval:
             self.rollout()
+            self.reset()
         self.envs.close()
         
         if self.world_size > 1:

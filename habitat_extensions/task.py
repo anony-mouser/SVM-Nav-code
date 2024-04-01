@@ -90,7 +90,10 @@ class VLNCEDatasetV1(Dataset):
         dataset_filename = config.DATA_PATH.format(split=config.SPLIT)
         llm_replys_filename = config.LLM_REPLYS_PATH
         with gzip.open(dataset_filename, "rt") as f:
-            self.from_json(f.read(), scenes_dir=config.SCENES_DIR, llm_replys_filename=llm_replys_filename)
+            self.from_json(f.read(), 
+                           scenes_dir=config.SCENES_DIR, 
+                           llm_replys_filename=llm_replys_filename, 
+                           config=config)
 
         if ALL_SCENES_MASK not in config.CONTENT_SCENES:
             scenes_to_load = set(config.CONTENT_SCENES)
@@ -109,14 +112,18 @@ class VLNCEDatasetV1(Dataset):
                 if episode.episode_id not in ep_ids_to_purge
             ]
 
-    def from_json(
-        self, json_str: str, scenes_dir: Optional[str] = None, llm_replys_filename = None
-    ) -> None:
+    def from_json(self, 
+                  json_str: str, scenes_dir: Optional[str] = None, 
+                  llm_replys_filename = None, config: Optional[Config] = None) -> None:
 
         deserialized = json.loads(json_str)
         if llm_replys_filename:
             with open(llm_replys_filename, 'r') as f:
                 llm_replys = json.load(f)
+        if config.EPISODES_ALLOWED is not None:
+            config.defrost()
+            config.EPISODES_ALLOWED = list(map(lambda x: int(x), list(llm_replys.keys())))
+            config.freeze()
             
         self.instruction_vocab = VocabDict(
             word_list=deserialized["instruction_vocab"]["word_list"]

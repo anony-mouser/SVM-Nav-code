@@ -17,10 +17,10 @@ _C.TASK.SENSOR_POSE_SENSOR = CN()
 _C.TASK.SENSOR_POSE_SENSOR.TYPE = "SensorPoseSensor"
 
 # -----------------------------------------------------------------------------
-# VLN SUB INSTRUCTION SENSOR
+# VLN LLM SENSOR
 # -----------------------------------------------------------------------------
-_C.TASK.SUB_INSTRUCTION_SENSOR = CN()
-_C.TASK.SUB_INSTRUCTION_SENSOR.TYPE = "SubInstructionSensor"
+_C.TASK.LLM_SENSOR = CN()
+_C.TASK.LLM_SENSOR.TYPE = "LLMSensor"
 
 # -----------------------------------------------------------------------------
 # VLN POSITION SENSOR
@@ -115,8 +115,8 @@ _C.TASK.TOP_DOWN_MAP_VLNCE.FOG_OF_WAR.VISIBILITY_DIST = 5.0
 # ----------------------------------------------------------------------------
 # DATASET EXTENSIONS
 # ----------------------------------------------------------------------------
-_C.DATASET.EPISODES_ALLOWED = [701]
-# _C.DATASET.EPISODES_ALLOWED = [30]
+# _C.DATASET.EPISODES_ALLOWED = [701]
+_C.DATASET.EPISODES_ALLOWED = [389]
 
 
 def get_extended_config(
