@@ -45,9 +45,7 @@ class FrontierPolicy(nn.Module):
         for waypoint in tmp_waypoints:
             value = value_map[waypoint[0], waypoint[1]]
             if value == 0:
-                print("find a waypoint whose value is 0: ", waypoint)
                 nearest_waypoint = self._get_nearest_nonzero_waypoint(value_map.astype(bool), waypoint)
-                print("nearest not zero waypoint: ", nearest_waypoint)
                 waypoints.append(nearest_waypoint)
             else:
                 waypoints.append(waypoint)

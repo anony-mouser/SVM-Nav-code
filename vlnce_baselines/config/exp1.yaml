@@ -9,7 +9,7 @@ CHECKPOINT_FOLDER: data/checkpoints/
 EVAL_CKPT_PATH_DIR: data/checkpoints/
 RESULTS_DIR: data/logs/eval_results/
 VIDEO_DIR: data/logs/video/
-KEYBOARD_CONTROL: 1
+KEYBOARD_CONTROL: 0
 
 SENSORS: ['RGB_SENSOR', 'DEPTH_SENSOR']
 

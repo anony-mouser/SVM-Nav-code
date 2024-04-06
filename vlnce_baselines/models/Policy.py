@@ -16,6 +16,7 @@ from vlnce_baselines.utils.map_utils import *
 from vlnce_baselines.utils.data_utils import OrderedSet
 from vlnce_baselines.models.fmm_planner import FMMPlanner
 from vlnce_baselines.models.frontier_policy import FrontierPolicy
+from vlnce_baselines.models.super_pixel_policy import SuperPixelPolicy
 
 
 class FusionMapPolicy(nn.Module):
@@ -35,9 +36,15 @@ class FusionMapPolicy(nn.Module):
         )
         
         self.frontier_policy = FrontierPolicy()
+        self.superpixel_policy = SuperPixelPolicy()
+        self.max_destination_socre = -1e5
+        self.fixed_destination = None
         
     def reset(self) -> None:
-        self.frontier_policy.reset()
+        # self.frontier_policy.reset()
+        self.superpixel_policy.reset()
+        self.fixed_destination = None
+        self.max_destination_socre = -1e5
         self.max_destination_confidence = -1.
         self.vis_image = np.ones((self.map_shape, self.map_shape, 3)).astype(np.uint8) * 255
     
@@ -45,8 +52,10 @@ class FusionMapPolicy(nn.Module):
                     full_pose: Sequence, 
                     waypoint: np.ndarray, 
                     map: np.ndarray, 
+                    collision_map: np.ndarray,
                     step: int,
-                    current_episode_id: int) -> int:
+                    current_episode_id: int,
+                    search_destination: bool) -> int:
         """
         The coordinates among agent's pose in full_pose, agent's position in full_map, 
         agent's position in visualization are ignoring. And there're many np.flipud which
@@ -112,6 +121,8 @@ class FusionMapPolicy(nn.Module):
         objects = get_objects(map)
         obstacles = get_obstacle(map)
         traversible = 1 - (objects + obstacles)
+        if collision_map is not None:
+            traversible[collision_map == 1] = 0
         planner = FMMPlanner(traversible, visualize=self.visualize)
         
         goal_x = waypoint[0]
@@ -124,13 +135,17 @@ class FusionMapPolicy(nn.Module):
         heading_vector = np.dot(rotation_matrix, heading_vector)
         waypoint_vector = sub_waypoint - position
         
-        if stop:
+        if stop and search_destination:
             action = 0
             print("stop")
+        elif stop and not search_destination:
+            action = 2
         else:
             relative_angle, action = angle_and_direction(heading_vector, waypoint_vector, self.turn_angle + 1)
         
         if self.visualize:
+            print("waypoint: ", waypoint)
+            print("position: ", position)
             normalized_data = ((planner.fmm_dist - np.min(planner.fmm_dist)) / 
                             (np.max(planner.fmm_dist) - np.min(planner.fmm_dist)) * 255).astype(np.uint8)
             normalized_data = np.stack((normalized_data,) * 3, axis=-1)
@@ -148,63 +163,76 @@ class FusionMapPolicy(nn.Module):
         return action
     
     def _search_destination(self, 
-                            destination: str, 
+                            destinations: List[str], 
                             current_value: float,
                             max_value: float,
-                            classes: List,
                             detected_classes: OrderedSet, 
                             one_step_full_map: np.ndarray, 
                             full_map: np.ndarray, 
                             current_detection: sv.Detections, step: int):
-        if destination not in detected_classes:
+        check = [item in detected_classes for item in destinations]
+        if sum(check) == 0:
             """ 
             havn't detected destination
             """
-            return None
+            return None, -1e5
         
-        map_idx = detected_classes.index(destination)
-        destination_map = one_step_full_map[4 + map_idx]
-        class_idx = classes.index(destination)
-        class_ids = current_detection.class_id
-        confidences = current_detection.confidence
-        # masks = current_detection.mask
-        
-        if class_idx not in class_ids:
-            """ 
-            Agent have already seen the destination in the past but not detected it in current step
-            """
-            return None
-        
-        destination_ids = np.argwhere(class_ids == class_idx)
-        destination_confidences = confidences[destination_ids]
-        max_confidence_idx = np.argmax(destination_confidences)
-        max_idx = destination_ids[max_confidence_idx].item()
-        # destination_mask = masks[max_idx]
-        destination_confidence = confidences[max_idx]
-        if destination_confidence > self.max_destination_confidence:
-            self.max_destination_confidence = destination_confidence
+        candidates = []
+        print("destinations: ", destinations)
+        print("check: ", check)
+        for i, destination in enumerate(destinations):
+            if not check[i]:
+                continue
+            map_idx = detected_classes.index(destination)
+            destination_map = one_step_full_map[4 + map_idx]
+            class_idx = destinations.index(destination)
+            class_ids = current_detection.class_id
+            confidences = current_detection.confidence
+            # masks = current_detection.mask
             
-        # plt.imshow(destination_mask)
-        # plt.savefig("/data/ckh/Zero-Shot-VLN-FusionMap/tests/destination_mask/mask%d.png"%step)
-        # np.save("/data/ckh/Zero-Shot-VLN-FusionMap/tests/destination_mask/mask%d.npy"%step, destination_mask)
+            if class_idx not in class_ids:
+                """ 
+                Agent have already seen the destination in the past but not detected it in current step
+                """
+                return None, -1e5
+            
+            destination_ids = np.argwhere(class_ids == class_idx)
+            destination_confidences = confidences[destination_ids]
+            max_confidence_idx = np.argmax(destination_confidences)
+            max_idx = destination_ids[max_confidence_idx].item()
+            # destination_mask = masks[max_idx]
+            destination_confidence = confidences[max_idx]
+            if destination_confidence > self.max_destination_confidence:
+                self.max_destination_confidence = destination_confidence
+                
+            # plt.imshow(destination_mask)
+            # plt.savefig("/data/ckh/Zero-Shot-VLN-FusionMap/tests/destination_mask/mask%d.png"%step)
+            # np.save("/data/ckh/Zero-Shot-VLN-FusionMap/tests/destination_mask/mask%d.npy"%step, destination_mask)
+            
+            destination_waypoint = process_destination(destination_map, full_map)
+            confidence_part = destination_confidence / self.max_destination_confidence
+            value_part = current_value / max_value
+            score = (confidence_part + value_part) / 2.0
+            print("value part: ", value_part)
+            print("confidence part: ", confidence_part)
+            if score >= 0.5 and current_value >= 0.3 and destination_waypoint is not None:
+                candidates.append((destination_waypoint, score))
+            else:
+                candidates.append((None, -1e5))
+            
+        candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
+        waypoint, score = candidates[0]
         
-        destination_waypoint = process_destination(destination_map, full_map)
-        confidence_part = destination_confidence / self.max_destination_confidence
-        value_part = current_value / max_value
-        score = (confidence_part + value_part) / 2.0
-        
-        if score >= 0.5 and current_value >= 0.25 and destination_waypoint is not None:
-            return destination_waypoint
-        else:
-            return None
+        return waypoint, score
             
     def forward(self, 
                 value_map: np.ndarray, 
+                collision_map: np.ndarray,
                 full_map: np.ndarray, 
                 full_pose: Sequence, 
                 frontiers: np.ndarray, 
                 destination: str, 
-                classes: List,
+                search_destination: bool,
                 detected_classes: OrderedSet, 
                 one_step_full_map: np.ndarray, 
                 current_detection: sv.Detections, 
@@ -214,20 +242,40 @@ class FusionMapPolicy(nn.Module):
         x, y, heading = full_pose
         x, y = x * (100 / self.resolution), y * (100 / self.resolution)
         position = np.array([y, x])
-        best_waypoint, best_value, sorted_waypoints = self.frontier_policy(frontiers, value_map, position)
+        # best_waypoint, best_value, sorted_waypoints = self.frontier_policy(frontiers, value_map, position)
+        best_waypoint, best_value, sorted_waypoints = self.superpixel_policy(full_map, value_map, position)
+        
         print("===best waypoint: ", best_waypoint)
         print("current_position's value: ", value_map[int(y), int(x)])
         print("current pose: ", full_pose)
         current_value = value_map[int(y), int(x)]
         max_value = np.max(value_map)
-        destination_waypoint = self._search_destination(destination, current_value, max_value,
-                                 classes, detected_classes, 
-                                 one_step_full_map, full_map, current_detection, step)
-        if destination_waypoint is not None:
-            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!destination waypoint: ", destination_waypoint)
-            best_waypoint = destination_waypoint
-        # best_waypoint = np.array([302, 206])
-        action = self._get_action(full_pose, best_waypoint, full_map, step, current_episode_id)
+        if search_destination:
+            print("!!!!!! saerching destination")
+            destination_waypoint, score = self._search_destination(destination, current_value, max_value,
+                                                                   detected_classes, one_step_full_map, 
+                                                                   full_map, current_detection, step)
+            print("score and max socre: ", score, self.max_destination_socre)
+            if destination_waypoint is not None and score > self.max_destination_socre:
+                print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!destination waypoint: ", destination_waypoint)
+                self.fixed_destination = destination_waypoint
+                
+            if score > self.max_destination_socre:
+                self.max_destination_socre = score
+                
+            if self.fixed_destination is not None:
+                print("!!!!!! fixed destination: ", self.fixed_destination)
+                action = self._get_action(full_pose, self.fixed_destination, 
+                                          full_map, collision_map, step, current_episode_id,
+                                          search_destination)
+            else:
+                action = self._get_action(full_pose, best_waypoint, 
+                                          full_map, collision_map, step, current_episode_id,
+                                          search_destination)
+        else:
+            action = self._get_action(full_pose, best_waypoint, 
+                                      full_map, collision_map, step, current_episode_id,
+                                      search_destination)
         
         if self.visualize:
             self._visualization(value_map, sorted_waypoints, best_waypoint, step, current_episode_id)

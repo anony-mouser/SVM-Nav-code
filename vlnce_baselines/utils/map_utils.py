@@ -7,6 +7,8 @@ from collections import Sequence
 from scipy.spatial.distance import cdist
 from skimage.morphology import remove_small_objects, closing, disk, dilation
 
+from vlnce_baselines.utils.pose import get_agent_position, threshold_poses
+
 
 def get_grid(pose: torch.Tensor, grid_size: Tuple, device: torch.device):
     """
@@ -99,7 +101,7 @@ def find_frontiers(map: np.ndarray) -> np.ndarray:
     explored_area = get_explored_area(map)
     contours, _ = cv2.findContours(explored_area.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     image = np.zeros(map.shape[-2:], dtype=np.uint8)
-    image = cv2.drawContours(image, contours, -1, (255, 255, 255), thickness=2)
+    image = cv2.drawContours(image, contours, -1, (255, 255, 255), thickness=3)
     res = np.logical_and(floor, image)
     res = remove_small_objects(res.astype(bool), min_size=30)
     
@@ -168,20 +170,6 @@ def angle_to_vector(angle: float) -> np.ndarray:
     return np.array([x, y])
 
 
-def change_to_Cartesian_coordinates(point: Sequence, x_shape) -> np.ndarray:
-    x, y = point
-    
-    return np.array([y, x_shape - x])
-
-
-def array_coord_to_cartesian_coord(point: np.ndarray, x_shape: int) -> np.ndarray:
-    x, y = point
-    flipud_x = x_shape - x
-    flipud_y = y
-    
-    return np.array([flipud_y, flipud_x])
-
-
 def process_destination(destination: np.ndarray, full_map: np.ndarray) -> np.ndarray:
     floor = process_floor(full_map)
     traversible = get_traversible_area(full_map)
@@ -198,8 +186,8 @@ def process_destination(destination: np.ndarray, full_map: np.ndarray) -> np.nda
 
 
 def angle_and_direction(a: np.ndarray, b: np.ndarray, turn_angle: float) -> Tuple:
-    unit_a = a / np.linalg.norm(a)
-    unit_b = b / np.linalg.norm(b)
+    unit_a = a / (np.linalg.norm(a) + 1e-5)
+    unit_b = b / (np.linalg.norm(b) + 1e-5)
     
     cross_product = np.cross(unit_a, unit_b)
     dot_product = np.dot(unit_a, unit_b)
@@ -243,8 +231,39 @@ def closest_point_within_threshold(points_array: np.ndarray, target_point: np.nd
         return int(closest_index)
 
     return -1
-
-
+    
+    
+def collision_check(last_pose: np.ndarray, current_pose: np.ndarray,
+                    resolution: float, map_shape: Sequence,
+                    collision_threshold: float=0.20,
+                    width: float=0.5, height: float=0.5, buf: float=0.0) -> np.ndarray:
+    last_position, last_heading = get_agent_position(last_pose, resolution)
+    x0, y0 = last_position
+    current_position, _ = get_agent_position(current_pose, resolution)
+    position_vector = current_position - last_position
+    displacement = np.linalg.norm(position_vector)
+    collision_map = np.zeros(map_shape)
+    
+    if displacement < collision_threshold * 100 / resolution:
+        print("!!!!!!!!! COLLISION !!!!!!!!!")
+        theta = np.deg2rad(last_heading)
+        width_range = int(width * 100 / resolution)
+        height_range = int(height * 100 / resolution)
+        
+        for i in range(height_range):
+            for j in range(width_range):
+                l1 = j + buf
+                l2 = i - width_range // 2
+                dy = l1 * np.cos(theta) + l2 * np.sin(theta) # change to ndarray coordinate
+                dx = l1 * np.sin(theta) - l1 * np.cos(theta) # change to ndarray coordinate
+                x1 = int(x0 - dx)
+                y1 = int(y0 + dy)
+                x1, y1 = threshold_poses([x1, y1], collision_map.shape)
+                collision_map[x1, y1] = 1
+    
+    return collision_map
+        
+    
 # def get_traversible_area(map: np.ndarray) -> np.ndarray:
 #     objects = get_objects(map)
 #     obstacles = get_obstacle(map)

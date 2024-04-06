@@ -13,7 +13,7 @@ from typing import Tuple, Dict, List
 
 from skimage.morphology import skeletonize
 from skimage.feature import corner_harris, corner_peaks
-
+from vlnce_baselines.utils.map_utils import angle_between_vectors
 
 class SkeletonMap:
     def __init__(self) -> None:
@@ -94,15 +94,6 @@ class SkeletonMap:
                         lines_points[n].append(line.sum())
                     
         return lines_points
-    
-    def angle_between_vectors(self, v1: np.ndarray, v2: np.ndarray) -> np.float64:
-        dot_product = np.dot(v1, v2)
-        norm_v1 = LA.norm(v1)
-        norm_v2 = LA.norm(v2)
-        cos_theta = dot_product / (norm_v1 * norm_v2)
-        theta = np.arccos(cos_theta)
-        
-        return np.degrees(theta)
 
     def line_analyze(self, line_points: Dict[List]) -> np.ndarray:
         n = len(line_points)
@@ -117,11 +108,11 @@ class SkeletonMap:
                 other_start_point, other_end_point = other_line
                 if np.array_equal(end_point, other_start_point) or np.array_equal(end_point, other_end_point):
                     adjacent_vector = other_end_point - other_start_point
-                    angle = self.angle_between_vectors(direction_vector, adjacent_vector)
+                    angle = angle_between_vectors(direction_vector, adjacent_vector)
                     angle_matrix[key, other_key] = angle
                 elif np.array_equal(start_point, other_start_point) or np.array_equal(start_point, other_end_point):
                     adjacent_vector = other_end_point - other_start_point
-                    angle = self.angle_between_vectors(direction_vector, adjacent_vector)
+                    angle = angle_between_vectors(direction_vector, adjacent_vector)
                     angle_matrix[key, other_key] = angle
         
         return angle_matrix

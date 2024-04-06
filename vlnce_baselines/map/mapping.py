@@ -284,6 +284,12 @@ class Semantic_Mapping(nn.Module):
             self.last_loc = self.state[:, :3]
         else:
             self.last_loc = self.curr_loc
+            
+        if step == 12:
+            self.feat[:, 0, :] = 1.0
+            for e in range(self.num_environments):
+                self.local_map[e, 0, ...] = 0.0
+                
         locs = self.local_pose.cpu().numpy()
         self.state[:, :3] = locs + self.origins
         self.curr_loc = self.state[:, :3]

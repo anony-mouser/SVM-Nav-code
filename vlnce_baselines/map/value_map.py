@@ -39,6 +39,7 @@ class ValueMap(nn.Module):
         self.device = (torch.device("cuda", self.config.TORCH_GPU_ID) if 
                        torch.cuda.is_available() else torch.device("cpu"))
         self.vis_image = np.ones((580, 480 * 3 + 20 * 4, 3)).astype(np.uint8) * 255
+        self.previous_floor = np.zeros(self.shape)
         self._load_model_from_disk()
     
     def _create_model(self):
@@ -155,6 +156,8 @@ class ValueMap(nn.Module):
             value (torch.Tensor): torch.size([1,1]) on device
         """
         # self.current_floor = process_floor(full_map, kernel_size=3)
+        # self.current_floor = np.logical_or(get_floor_area(full_map), self.previous_floor)
+        # self.previous_floor = self.current_floor
         self.current_floor = get_floor_area(full_map)
         position = full_pose[:2] * (100 / self.resolution)
         heading = full_pose[-1]

@@ -15,7 +15,7 @@ class WaypointSelector(nn.Module):
         self._last_value = float("-inf")
         self._last_waypoint = np.zeros(2)
         
-    def forward(self, sorted_waypoints: List, sorted_values: List, position: np.ndarray):
+    def forward(self, sorted_waypoints: np.ndarray, sorted_values: List, position: np.ndarray):
         best_waypoint_idx = None
         if not np.array_equal(self._last_waypoint, np.zeros(2)):
             curr_index = None
@@ -26,6 +26,8 @@ class WaypointSelector(nn.Module):
                     break
             
             if curr_index is None:
+                print("sorted waypoints: ", sorted_waypoints)
+                print("last waypoint: ", self._last_waypoint)
                 closest_index = closest_point_within_threshold(sorted_waypoints, self._last_waypoint, threshold=0.5)
                 if closest_index != -1:
                     curr_index = closest_index

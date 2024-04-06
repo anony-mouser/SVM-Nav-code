@@ -22,6 +22,9 @@ _C.RESULTS_DIR = "data/checkpoints/pretrained/evals"
 _C.BLIP2_MODEL_DIR = "data/blip2/blip2_model.pt"
 _C.BLIP2_VIS_PROCESSORS_DIR = "data/blip2/blip2_vis_processors.pt"
 _C.BLIP2_TEXT_PROCESSORS_DIR = "data/blip2/blip2_text_processors.pt"
+_C.VQA_MODEL_DIR = "data/vqa/vqa_model.pt"
+_C.VQA_VIS_PROCESSORS_DIR = "data/vqa/vqa_vis_processors.pt"
+_C.VQA_TEXT_PROCESSORS_DIR = "data/vqa/vqa_text_processors.pt"
 _C.KEYBOARD_CONTROL = 0
 
 # -----------------------------------------------------------------------------
