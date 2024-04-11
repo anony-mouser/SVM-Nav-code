@@ -26,8 +26,6 @@ class WaypointSelector(nn.Module):
                     break
             
             if curr_index is None:
-                print("sorted waypoints: ", sorted_waypoints)
-                print("last waypoint: ", self._last_waypoint)
                 closest_index = closest_point_within_threshold(sorted_waypoints, self._last_waypoint, threshold=0.5)
                 if closest_index != -1:
                     curr_index = closest_index
@@ -38,7 +36,7 @@ class WaypointSelector(nn.Module):
         
         if best_waypoint_idx is None:
             for idx, waypoint in enumerate(sorted_waypoints):
-                cyclic = self._acyclic_enforcer.check_cyclic(position, waypoint)
+                cyclic = self._acyclic_enforcer.check_cyclic(position, waypoint, threshold=0.5*20)
                 if cyclic:
                     continue
                 best_waypoint_idx = idx

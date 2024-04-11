@@ -19,5 +19,5 @@ MAP:
 
 EVAL:
   USE_CKPT_CONFIG: False
-  SAVE_RESULTS: False
+  SAVE_RESULTS: True
   SPLIT: val_unseen

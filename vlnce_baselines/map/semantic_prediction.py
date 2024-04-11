@@ -1,4 +1,5 @@
 import attr
+import copy
 from typing import Any, Union, List, Tuple
 from abc import ABCMeta, abstractmethod
 
@@ -32,7 +33,11 @@ class Segment(metaclass=ABCMeta):
         pass
     
 
+@attr.s(auto_attribs=True)
 class GroundedSAM(Segment):
+    height: float = 480.
+    width: float = 640.
+    
     def _create_model(self, config: Config) -> Any:
         GROUNDING_DINO_CONFIG_PATH = config.MAP.GROUNDING_DINO_CONFIG_PATH
         GROUNDING_DINO_CHECKPOINT_PATH = config.MAP.GROUNDING_DINO_CHECKPOINT_PATH
@@ -62,6 +67,27 @@ class GroundedSAM(Segment):
             result_masks.append(masks[index])
         return np.array(result_masks)
     
+    def _process_detections(self, detections: sv.Detections) -> sv.Detections:
+        box_areas = detections.box_area
+        i = len(detections) - 1
+        while i >= 0:
+            if box_areas[i] / (self.width * self.height) < 0.95:
+                i -= 1
+                continue
+            else:
+                detections.xyxy = np.delete(detections.xyxy, i, axis=0)
+                if detections.mask is not None:
+                    detections.mask = np.delete(detections.mask, i, axis=0)
+                if detections.confidence is not None:
+                    detections.confidence = np.delete(detections.confidence, i)
+                if detections.class_id is not None:
+                    detections.class_id = np.delete(detections.class_id, i)
+                if detections.tracker_id is not None:
+                    detections.tracker_id = np.delete(detections.tracker_id, i)
+            i -= 1
+            
+        return detections
+    
     def segment(self, image: VisualObservation, **kwargs) -> Tuple[np.ndarray, List[str], np.ndarray]:
         classes = kwargs.get("classes", [])
         box_annotator = sv.BoxAnnotator()
@@ -74,18 +100,18 @@ class GroundedSAM(Segment):
             box_threshold=self.box_threshold,
             text_threshold=self.text_threshold
         )
-        detections.mask = self._segment(
-            sam_predictor=self.sam_predictor,
-            image=cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
-            xyxy=detections.xyxy
-        )
-        
+        detections = self._process_detections(detections)
         for _, _, confidence, class_id, _ in detections:
             if class_id is not None:
                 labels.append(f"{classes[class_id]} {confidence:0.2f}")
             else:
                 labels.append(f"unknow {confidence:0.2f}")
-
+                
+        detections.mask = self._segment(
+            sam_predictor=self.sam_predictor,
+            image=cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
+            xyxy=detections.xyxy
+        )
         # annotated_image.shape=(h,w,3)
         annotated_image = mask_annotator.annotate(scene=image.copy(), detections=detections)
         annotated_image = box_annotator.annotate(scene=annotated_image, detections=detections, labels=labels)

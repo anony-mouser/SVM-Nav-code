@@ -14,6 +14,7 @@ from habitat import Config
 from collections import Sequence
 from typing import Union, Tuple, List
 from lavis.models import load_model_and_preprocess
+from skimage.morphology import remove_small_objects
 
 from vlnce_baselines.utils.map_utils import *
 from vlnce_baselines.utils.visualization import *
@@ -124,8 +125,8 @@ class ValueMap(nn.Module):
         new_value /= partion
         new_confidence /= partion
         # new_value[new_map_mask] = 0.0
-        self.value_map[0] = new_confidence
-        self.value_map[1] = new_value
+        self.value_map[0] = new_confidence * self.current_floor
+        self.value_map[1] = new_value * self.current_floor
         # update_value = new_value * self.current_floor
         # update_mask = prev_value < update_value
         # self.value_map[1, update_mask] = update_value[update_mask]
@@ -144,8 +145,10 @@ class ValueMap(nn.Module):
     def forward(self,
                 step: int,
                 full_map: np.ndarray, 
+                collision_map: np.ndarray,
                 blip_value: np.ndarray,
                 full_pose: Sequence,
+                classes: List,
                 current_episode_id: int):
         """project cosine similarity to floor
 
@@ -158,7 +161,9 @@ class ValueMap(nn.Module):
         # self.current_floor = process_floor(full_map, kernel_size=3)
         # self.current_floor = np.logical_or(get_floor_area(full_map), self.previous_floor)
         # self.previous_floor = self.current_floor
-        self.current_floor = get_floor_area(full_map)
+        self.current_floor = get_floor_area(full_map, classes)
+        self.current_floor[collision_map == 1] = 0
+        self.current_floor = remove_small_objects(self.current_floor, min_size=64)
         position = full_pose[:2] * (100 / self.resolution)
         heading = full_pose[-1]
         mask, confidence_mask = self._create_sector_mask(position, heading)

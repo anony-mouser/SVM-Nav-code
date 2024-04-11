@@ -110,6 +110,24 @@ legend_color_palette = [
     (0.71, 0.99, 0.77)
 ]
 
+
 legend_color_palette = [(int(color[0] * 255), 
                          int(color[1] * 255), 
                          int(color[2] * 255)) for color in legend_color_palette]
+
+map_channels = 4
+
+base_classes = [
+    "chair", "couch", "plant", "bed", "toilet", 
+    "tv", "table", "oven", "sink", "refrigerator", 
+    "book", "clock", "vase", "cup", "bottle",
+    "wall", "floor"
+]
+
+
+navigable_classes = [
+    "stair", "stairs",
+    "stairway", "stairways",
+    "staircase", "staircases",
+    "floor", "ground",
+]

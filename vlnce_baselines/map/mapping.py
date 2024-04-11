@@ -21,12 +21,11 @@ from torch.nn import functional as F
 
 import habitat_extensions.pose_utils as pu
 
+from vlnce_baselines.utils.constant import *
 from vlnce_baselines.utils.map_utils import *
 import vlnce_baselines.utils.depth_utils as du
 import vlnce_baselines.utils.visualization as vu
 from vlnce_baselines.utils.data_utils import OrderedSet
-from vlnce_baselines.utils.constant import color_palette
-from vlnce_baselines.utils.constant import legend_color_palette
 
 
 class Semantic_Mapping(nn.Module):
@@ -48,7 +47,7 @@ class Semantic_Mapping(nn.Module):
     4. Past Agent Locations
     5,6,7,.. : Semantic Categories
     """
-    MAP_CHANNELS = 4
+    MAP_CHANNELS = map_channels # map_channels is defined in constant.py
 
     def __init__(self, args):
         super(Semantic_Mapping, self).__init__()
@@ -338,7 +337,7 @@ class Semantic_Mapping(nn.Module):
                                         self.lmb[e, 2]:self.lmb[e, 3]]
                 self.local_pose[e] = self.full_pose[e] - \
                     torch.from_numpy(self.origins[e]).to(self.device).float()
-        frontiers = find_frontiers(self.full_map[0].cpu().numpy())
+        frontiers = find_frontiers(self.full_map[0].cpu().numpy(), detected_classes)
         if self.print_images:
             plt.imshow(np.flipud(frontiers))
             save_dir = os.path.join(self.args.RESULTS_DIR, "frontiers/eps_%d"%current_episode_id)
@@ -517,7 +516,8 @@ class Semantic_Mapping(nn.Module):
         # obs: [b, c, h*w] => [b, 17, 19200], feat is a tensor contains all predicted semantic features
         pool = nn.AvgPool2d(self.du_scale)
         # obs[:, 4, ...] = 0.
-        self.min_z = int(25 / z_resolution - min_h)
+        self.min_z = int(25 / z_resolution - min_h) # 25 / 5 - (-8) = 13
+        self.min_z = 2
         self.feat[:, 1:, :] = pool(obs[:, 4:, :, :]).view(bs, c - 4, h // self.du_scale * w // self.du_scale)
 
         # self.init_grid: [bs, categories + 1, x=vr, y=vr, z=(max_height - min_height)] => [bs, 17, 100, 100, 80]

@@ -1,13 +1,15 @@
 import cv2
 import torch
 import numpy as np
-from typing import Tuple
+from typing import Tuple, List
 import torch.nn.functional as F
 from collections import Sequence
 from scipy.spatial.distance import cdist
 from skimage.morphology import remove_small_objects, closing, disk, dilation
 
+from vlnce_baselines.utils.constant import *
 from vlnce_baselines.utils.pose import get_agent_position, threshold_poses
+import time
 
 
 def get_grid(pose: torch.Tensor, grid_size: Tuple, device: torch.device):
@@ -49,11 +51,29 @@ def get_grid(pose: torch.Tensor, grid_size: Tuple, device: torch.device):
     return rot_grid, trans_grid
 
 
+def process_navigable_classes(classes: List):
+    classes = [item.strip().lower() for item in classes]
+    common_items = set(navigable_classes) & set(classes)
+    if len(common_items) > 0:
+        navigable_index = [classes.index(item) for item in common_items]
+    else:
+        navigable_index = []
+    
+    return navigable_index
+
+
 def get_obstacle(map: np.ndarray, kernel_size: int=3) -> np.ndarray:
+    """
+    The agent radius is 0.18m and resolution is 5, so the agent
+    takes at least a 8*8 square area in map whose size is 64.
+    Now we will remove some small objects(think of them as noise) first
+    and then do morphological closing, so set min_size=64 which is coincidentally
+    the default value of min_size is a good choice
+    """
     obstacle = map[0, ...]
     obstacle = remove_small_objects(
         obstacle.astype(bool), 
-        min_size=50, # you can try different minimum object size
+        min_size=64, # you can try different minimum object size
         connectivity=5)
     selem = disk(kernel_size)
     obstacle = closing(obstacle, selem)
@@ -61,76 +81,116 @@ def get_obstacle(map: np.ndarray, kernel_size: int=3) -> np.ndarray:
     return obstacle.astype(bool)
 
 
-def get_objects(map: np.ndarray, kernel_size: int=3) -> np.ndarray:
+def get_objects(map: np.ndarray, classes: List, kernel_size: int=3) -> Tuple:
+    navigable = np.zeros(map.shape[-2:])
+    navigable_index = process_navigable_classes(classes)
     objects = np.zeros(map.shape[-2:])
-    for obj in map[5:, ...]:
-        obj = remove_small_objects(obj.astype(bool), min_size=50)
-        selem = disk(kernel_size)
-        obj = closing(obj, selem)
-        objects += obj
+    for i, obj in enumerate(map[map_channels:, ...]):
+        obj = remove_small_objects(obj.astype(bool), min_size=64)
+        obj = closing(obj, selem=disk(kernel_size))
+        if i in navigable_index:
+            navigable = np.logical_or(navigable, obj)
+        else:
+            objects = np.logical_or(obj, objects)
     
-    return objects.astype(bool)
+    return objects.astype(bool), navigable.astype(bool)
 
 
 def get_explored_area(map: np.ndarray, kernel_size: int=3) -> np.ndarray:
+    """ 
+    when extract large area like explored area, we prefer do morphological
+    closing first then remove small objects.
+    the agent takes 8*8 area and one step is 0.25m which takes 5 squares
+    so an area of 20*20 size is enough for the agent to take one step in four directions.
+    """
     explored_area = map[1, ...]
     selem = disk(kernel_size)
     explored_area = closing(explored_area, selem)
-    explored_area = remove_small_objects(explored_area.astype(bool), min_size=200)
+    explored_area = remove_small_objects(explored_area.astype(bool), min_size=400)
     
     return explored_area
 
 
-def process_floor(map: np.ndarray, kernel_size: int=3) -> np.ndarray:
+def process_floor(map: np.ndarray, classes: List, kernel_size: int=3) -> np.ndarray:
+    """
+    we didn't use get_objects() and get_explored_area() here because
+    we want to extract the floor area more precisely. So we're going 
+    to do the morphological closing at the last step.
+    """
+    t1 = time.time()
+    navigable_index = process_navigable_classes(classes)
+    # print("classes: ", classes)
+    # print("navigable index: ", navigable_index)
+    # print("map length: ", len(map))
+    navigable = np.zeros(map.shape[-2:])
     explored_area = map[1, ...]
     obstacles = map[0, ...]
     objects = np.zeros(map.shape[-2:])
-    for obj in map[5:, ...]:
-        objects += obj
+    for i, obj in enumerate(map[map_channels:, ...]):
+        if i in navigable_index:
+            navigable += obj
+        else:
+            objects += obj
     free_mask = 1 - np.logical_or(obstacles, objects)
+    free_mask = np.logical_or(free_mask, navigable)
     free_space = explored_area * free_mask
-    floor = remove_small_objects(free_space.astype(bool), min_size=500)
+    floor = remove_small_objects(free_space.astype(bool), min_size=400)
     floor = closing(floor, selem=disk(kernel_size))
-    
+    # floor = remove_small_objects(free_space.astype(bool), min_size=400)
+    t2 = time.time()
+    print("process floor cost time: ", t2 - t1)
     return floor
 
 
-def find_frontiers(map: np.ndarray) -> np.ndarray:
+def find_frontiers(map: np.ndarray, classes: List) -> np.ndarray:
     # floor = process_floor(map)
-    floor = get_floor_area(map)
+    floor = get_floor_area(map, classes)
     explored_area = get_explored_area(map)
     contours, _ = cv2.findContours(explored_area.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     image = np.zeros(map.shape[-2:], dtype=np.uint8)
     image = cv2.drawContours(image, contours, -1, (255, 255, 255), thickness=3)
     res = np.logical_and(floor, image)
-    res = remove_small_objects(res.astype(bool), min_size=30)
+    res = dilation(res, selem=disk(2))
+    res = remove_small_objects(res.astype(bool), min_size=64)
     
     return res.astype(np.uint8)
 
 
-def get_traversible_area(map: np.ndarray) -> np.ndarray:
-    objects = get_objects(map)
+def get_traversible_area(map: np.ndarray, classes: List) -> np.ndarray:
+    """ 
+    Sometimes there may be holes in enclosed obstacle areas
+    this function aims to fill these holes.
+    """
+    objects, navigable = get_objects(map, classes)
     obstacles = get_obstacle(map)
-    traversible = 1 - (objects + obstacles)
-    traversible_area = np.sum(traversible)
-    nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(traversible.astype(np.uint8))
-    if nb_components > 2:
-        areas = [np.sum(output == i) for i in range(1, nb_components)]
-        left_areas = [traversible_area - item for item in areas]
-        min_idx = left_areas.index(min(left_areas)) + 1
-        res = np.ones(map.shape[-2:])
-        for i in range(nb_components):
-            if i != min_idx:    
-                res[output == i] = 0
-        return res
-    else:
-        return traversible
+    untraversible = np.logical_or(objects, obstacles)
+    untraversible[navigable == 1] = 0
+    untraversible = remove_small_objects(untraversible, min_size=64)
+    untraversible = closing(untraversible, selem=disk(3))
+    traversible = 1 - untraversible
+    # traversible_area = np.sum(traversible)
+    # nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(traversible.astype(np.uint8))
+    # if nb_components > 2:
+    #     areas = [np.sum(output == i) for i in range(1, nb_components)]
+    #     left_areas = [traversible_area - item for item in areas]
+    #     min_idx = left_areas.index(min(left_areas)) + 1
+    #     res = np.ones(map.shape[-2:])
+    #     for i in range(nb_components):
+    #         if i != min_idx:    
+    #             res[output == i] = 0
+    #     return res
+    # else:
+    #     return traversible
+    return traversible
 
-def get_floor_area(map: np.ndarray) -> np.ndarray:
-    traversible = get_traversible_area(map)
-    floor = process_floor(map)
+def get_floor_area(map: np.ndarray, classes: List) -> np.ndarray:
+    """ 
+    find traversible area that are connected with floor area
+    """
+    traversible = get_traversible_area(map, classes)
+    floor = process_floor(map, classes)
     res = np.logical_xor(floor, traversible)
-    res = remove_small_objects(res, min_size=100)
+    res = remove_small_objects(res, min_size=64)
     nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(res.astype(np.uint8))
     if nb_components > 2:
         areas = [np.sum(output == i) for i in range(1, nb_components)]
@@ -170,11 +230,15 @@ def angle_to_vector(angle: float) -> np.ndarray:
     return np.array([x, y])
 
 
-def process_destination(destination: np.ndarray, full_map: np.ndarray) -> np.ndarray:
-    floor = process_floor(full_map)
-    traversible = get_traversible_area(full_map)
-    destination = remove_small_objects(destination.astype(bool), min_size=30).astype(np.uint8)
+def process_destination(destination: np.ndarray, full_map: np.ndarray, classes: List) -> np.ndarray:
+    """ 
+    destination could be some small objects, so we dilate them first
+    and then remove small objects
+    """
+    floor = process_floor(full_map, classes)
+    traversible = get_traversible_area(full_map, classes)
     destination = dilation(destination, selem=disk(5))
+    destination = remove_small_objects(destination.astype(bool), min_size=64).astype(np.uint8)
     nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(destination)
     if len(centroids) > 1:
         centroid = centroids[1] # the first one is background
@@ -197,16 +261,12 @@ def angle_and_direction(a: np.ndarray, b: np.ndarray, turn_angle: float) -> Tupl
     
     if cross_product > 0 and angle_degrees > (turn_angle / 2):
         direction = 3 # right
-        print("turn left", angle_degrees)
     elif cross_product < 0 and angle_degrees > (turn_angle / 2):
         direction = 2 # left
-        print("turn right", angle_degrees)
     elif cross_product == 0 and angle_degrees == 180:
         direction = 3
-        print("turn left", angle_degrees)
     else:
         direction = 1 # forward
-        print("go forward", angle_degrees)
     
     return angle_degrees, direction
 
@@ -235,8 +295,8 @@ def closest_point_within_threshold(points_array: np.ndarray, target_point: np.nd
     
 def collision_check(last_pose: np.ndarray, current_pose: np.ndarray,
                     resolution: float, map_shape: Sequence,
-                    collision_threshold: float=0.20,
-                    width: float=0.5, height: float=0.5, buf: float=0.0) -> np.ndarray:
+                    collision_threshold: float=0.2,
+                    width: float=0.25, height: float=0.25) -> np.ndarray:
     last_position, last_heading = get_agent_position(last_pose, resolution)
     x0, y0 = last_position
     current_position, _ = get_agent_position(current_pose, resolution)
@@ -249,13 +309,14 @@ def collision_check(last_pose: np.ndarray, current_pose: np.ndarray,
         theta = np.deg2rad(last_heading)
         width_range = int(width * 100 / resolution)
         height_range = int(height * 100 / resolution)
+        buf = 0.9 * collision_threshold * 100 / resolution
         
         for i in range(height_range):
             for j in range(width_range):
                 l1 = j + buf
                 l2 = i - width_range // 2
                 dy = l1 * np.cos(theta) + l2 * np.sin(theta) # change to ndarray coordinate
-                dx = l1 * np.sin(theta) - l1 * np.cos(theta) # change to ndarray coordinate
+                dx = l1 * np.sin(theta) - l2 * np.cos(theta) # change to ndarray coordinate
                 x1 = int(x0 - dx)
                 y1 = int(y0 + dy)
                 x1, y1 = threshold_poses([x1, y1], collision_map.shape)

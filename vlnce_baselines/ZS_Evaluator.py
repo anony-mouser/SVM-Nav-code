@@ -1,4 +1,5 @@
 import os
+import copy
 import gzip
 import json
 import numpy as np
@@ -23,6 +24,7 @@ from habitat_baselines.common.baseline_registry import baseline_registry
 from vlnce_baselines.utils.map_utils import *
 from vlnce_baselines.map.value_map import ValueMap
 from vlnce_baselines.utils.data_utils import OrderedSet
+from vlnce_baselines.utils.constant import base_classes
 from vlnce_baselines.map.mapping import Semantic_Mapping
 from vlnce_baselines.models.Policy import FusionMapPolicy
 from vlnce_baselines.common.env_utils import construct_envs
@@ -37,9 +39,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         super().__init__()
         self._flush_secs = 30 # for tensorboard
         self.current_detections = None
-        self.base_classes = ["chair", "couch", "plant", "bed", "toilet", 
-                             "tv", "table", "oven", "sink", "refrigerator",
-                             "book", "clock", "vase", "cup", "bottle"]
+        self.base_classes = copy.deepcopy(base_classes)
         self.classes = []
         
         self.config = config
@@ -49,6 +49,8 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         self.width = config.TASK_CONFIG.SIMULATOR.RGB_SENSOR.WIDTH
         self.height = config.TASK_CONFIG.SIMULATOR.RGB_SENSOR.HEIGHT
         self.max_step = config.TASK_CONFIG.ENVIRONMENT.MAX_EPISODE_STEPS
+        self.map_shape = (config.MAP.MAP_SIZE_CM // self.resolution,
+                          config.MAP.MAP_SIZE_CM // self.resolution)
         
         self.device = (
             torch.device("cuda", self.config.TORCH_GPU_ID)
@@ -64,6 +66,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         self.current_episode_id = None
         self.direction_check_steps = 5
         self.max_constraint_steps = 15
+        self.collision_map = np.zeros(self.map_shape)
         
     # for tensorboard
     # @property
@@ -190,6 +193,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             self.segment_module.segment(rgb, classes=self.classes)
         self.mapping_module.rgb_vis = annotated_images
         assert len(masks) == len(labels), f"The number of masks not equal to the number of labels!"
+        print("detected classes: ", labels)
         class_names = self._process_labels(labels)
         masks = self._process_masks(masks, class_names)
         
@@ -320,7 +324,8 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         
         blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), self.destination)
         blip_value = blip_value.detach().cpu().numpy()
-        self.value_map_module(0, full_map[0], blip_value, full_pose[0], self.current_episode_id)
+        self.value_map_module(0, full_map[0], self.collision_map, 
+                              blip_value, full_pose[0], self.detected_classes, self.current_episode_id)
         
     # def _look_around(self):
     #     print("\n========== LOOK AROUND ==========\n")
@@ -378,12 +383,13 @@ class ZeroShotVlnEvaluator(BaseTrainer):
                         
             blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), self.destination)
             blip_value = blip_value.detach().cpu().numpy()
-            self.value_map_module(step, full_map[0], blip_value, full_pose[0], self.current_episode_id)
-            torch.save(self.value_map_module.value_map[1], 
-                       "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
-            self._action = self.policy(self.value_map_module.value_map[1], None,
-                                       full_map[0], full_pose[0], frontiers, 
-                                       self.destination_class, False, self.detected_classes, one_step_full_map[0], 
+            self.value_map_module(step, full_map[0], self.collision_map, blip_value, full_pose[0], 
+                                  self.detected_classes, self.current_episode_id)
+            # torch.save(self.value_map_module.value_map[1], 
+            #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
+            self._action = self.policy(self.value_map_module.value_map[1], self.collision_map,
+                                       full_map[0], full_pose[0], frontiers, self.detected_classes,
+                                       self.destination_class, self.classes, False, one_step_full_map[0], 
                                        self.current_detections, self.current_episode_id, step)
         
         return full_pose, obs, dones, infos
@@ -392,18 +398,19 @@ class ZeroShotVlnEvaluator(BaseTrainer):
     def _use_keyboard_control(self):
         a = input("action:")
         if a == 'w':
-           return {"action": HabitatSimActions.MOVE_FORWARD}
+           return {"action": 1}
         elif a == 'a':
-            return {"action": HabitatSimActions.TURN_LEFT}
+            return {"action": 2}
         elif a == 'd':
-            return {"action": HabitatSimActions.TURN_RIGHT}
+            return {"action": 3}
         else:
-            return {"action": HabitatSimActions.STOP}
+            return {"action": 0}
     
     def reset(self) -> None:
         self.mapping_module.reset()
         self.value_map_module.reset()
         self.policy.reset()
+        self.collision_map = np.zeros(self.mapping_module.map_shape)
         self.detected_classes = OrderedSet()
     
     # def rollout(self):
@@ -457,9 +464,9 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         constraint_steps = 0
         search_destination = False
         last_action, current_action = None, None
-        last_pose, current_pose, start_check_pose = None, None, None
-        collision_map = None
-        
+        last_pose, start_check_pose = None, None
+        current_pose = full_pose[0]
+        self._action2 = None
         current_idx = self.constraints_check.index(False)
         landmarks = self.decisions[str(current_idx)]['landmarks']
         self.destination_class = [item[0] for item in landmarks]
@@ -475,14 +482,17 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             if "direction constraint" in all_constraint_types and start_check_pose is None:
                 start_check_pose = full_pose[0] # fix last pose the first time try the direction constraint
             
-            last_pose = current_pose
-            current_pose = full_pose[0]
-            last_action = current_action
-            current_action = self._action
-            if last_pose is not None and last_action["action"] == 1:
-                collision_map = collision_check(last_pose, current_pose, self.resolution, 
-                                                self.mapping_module.map_shape)
-                import pdb;pdb.set_trace()
+            # last_pose = current_pose
+            # current_pose = full_pose[0]
+            # last_action = current_action
+            # current_action = self._action
+            # print("last pose, last action", last_pose, last_action)
+            # if last_pose is not None and current_action["action"] == 1:
+            #     print("in collision check module!")
+            #     collision_map = collision_check(last_pose, current_pose, self.resolution, 
+            #                                     self.mapping_module.map_shape)
+            #     self.collision_map = np.logical_or(self.collision_map, collision_map)
+                # import pdb;pdb.set_trace()
             
             if sum(self.constraints_check) >= len(self.sub_instructions) - 1:
                 search_destination = True
@@ -493,7 +503,6 @@ class ZeroShotVlnEvaluator(BaseTrainer):
                 check = self.constraints_monitor(current_constraint, obs[0], 
                                                 self.current_detections, self.classes, 
                                                 current_pose, start_check_pose)
-                print("check: ", check)
                 if sum(check) == len(check) or constraint_steps >= self.max_constraint_steps:
                     constraint_steps = 0
                     self.constraints_check[current_idx] = True
@@ -514,7 +523,8 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             actions = []
             for _ in range(self.config.NUM_ENVIRONMENTS):
                 if self.keyboard_control:
-                    actions.append(self._use_keyboard_control())
+                    self._action2 =self._use_keyboard_control() 
+                    actions.append(self._action2)
                 else:
                     actions.append(self._action)
             outputs = self.envs.step(actions)
@@ -532,14 +542,25 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             self.mapping_module.one_step_full_map.fill_(0.)
             self.mapping_module.one_step_local_map.fill_(0.)
             
+            last_pose = current_pose
+            current_pose = full_pose[0]
+            last_action = current_action
+            current_action = self._action
+            if last_pose is not None and current_action["action"] == 1:
+                collision_map = collision_check(last_pose, current_pose, self.resolution, 
+                                                self.mapping_module.map_shape)
+                self.collision_map = np.logical_or(self.collision_map, collision_map)
+            
+            
             blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), self.destination)
             blip_value = blip_value.detach().cpu().numpy()
-            self.value_map_module(step, full_map[0], blip_value, full_pose[0], self.current_episode_id)
-            torch.save(self.value_map_module.value_map[1], 
-                       "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
-            self._action = self.policy(self.value_map_module.value_map[1], collision_map,
-                                    full_map[0], full_pose[0], frontiers, 
-                                    self.destination_class, search_destination, self.detected_classes, 
+            self.value_map_module(step, full_map[0], self.collision_map, 
+                                  blip_value, full_pose[0], self.detected_classes, self.current_episode_id)
+            # torch.save(self.value_map_module.value_map[1], 
+            #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
+            self._action = self.policy(self.value_map_module.value_map[1], self.collision_map,
+                                    full_map[0], full_pose[0], frontiers, self.detected_classes,
+                                    self.destination_class, self.classes, search_destination, 
                                     one_step_full_map[0], self.current_detections, 
                                     self.current_episode_id, step)
     

@@ -17,11 +17,14 @@ class StateAction:
 
 class AcyclicEnforcer:
     history: Set[StateAction] = set()
-
-    def check_cyclic(self, position: np.ndarray, waypoint: Any) -> bool:
-        state_action = StateAction(position, waypoint)
-        cyclic = state_action in self.history
-        return cyclic
+    
+    def check_cyclic(self, position: np.ndarray, waypoint: Any, threshold: float) -> bool:
+        for item in self.history:
+            if (np.linalg.norm(item.waypoint - waypoint) <= threshold and 
+                np.linalg.norm(item.position - position) <= threshold):
+                return True
+            
+        return False
 
     def add_state_action(self, position: np.ndarray, waypoint: Any) -> None:
         state_action = StateAction(position, waypoint)

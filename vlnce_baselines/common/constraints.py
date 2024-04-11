@@ -6,9 +6,8 @@ from typing import List
 import supervision as sv
 from habitat import Config
 from collections import Sequence
+from vlnce_baselines.utils.map_utils import *
 from lavis.models import load_model_and_preprocess
-
-from vlnce_baselines.utils.pose import get_agent_position
 
 
 class ConstraintsMonitor(nn.Module):
@@ -63,8 +62,6 @@ class ConstraintsMonitor(nn.Module):
         """ 
         check by geometric relation
         """
-        print("!!!current pose in direction constraint: ", current_pose)
-        print("!!!last pose in direction constraint: ", last_pose)
         heading = -1 * last_pose[-1]
         current_position, _ = get_agent_position(current_pose, self.resolution)
         last_position, _ = get_agent_position(last_pose, self.resolution)
@@ -75,13 +72,10 @@ class ConstraintsMonitor(nn.Module):
         degrees = 180 - degrees
         if degrees == 0 or degrees == 180 or direction == 1:
             movement = 'forward'
-            print("!!!movement is forward")
         else:
             if direction == 2:
-                print("!!!movement is left")
                 movement = 'left'
             elif direction == 3:
-                print("!!!movement is right")
                 movement = 'right'
         if object == movement and displacement >= 0.5 * 100 / self.resolution:
             return True

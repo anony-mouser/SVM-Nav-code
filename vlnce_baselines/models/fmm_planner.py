@@ -63,7 +63,7 @@ class FMMPlanner:
         dd = ma.filled(dd, np.max(dd) + 1)
         self.fmm_dist = dd
     
-    def get_short_term_goal(self, agent_position: np.ndarray) -> Tuple:
+    def get_short_term_goal(self, agent_position: np.ndarray, fixed_destination: np.ndarray) -> Tuple:
         dist = copy.deepcopy(self.fmm_dist)
         x, y = int(agent_position[0]), int(agent_position[1])
         dx, dy = agent_position[0] - x, agent_position[1] - y
@@ -72,9 +72,9 @@ class FMMPlanner:
         subset = dist[x - 5 : x + 6, y - 5: y + 6]
         subset *= mask
         subset += (1 - mask) * 1e5
-        print("subset: ", subset[5,5])
         if subset[5, 5] < 0.25 * 100 / 5:
-            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!! TRUE !!!!!!!!!!!!!!!!!")
+            stop = True
+        if fixed_destination is not None and subset[5, 5] < 2.5 * 100 / 5:
             stop = True
         else:
             stop = False

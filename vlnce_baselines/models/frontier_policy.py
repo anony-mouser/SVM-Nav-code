@@ -5,7 +5,7 @@ from typing import List
 from collections import Sequence
 from scipy.spatial.distance import cdist
 from skimage.morphology import remove_small_objects
-from vlnce_baselines.models.waypoint_policy import WaypointSelector
+from vlnce_baselines.models.frontier_waypoint_selector import WaypointSelector
 
 
 class FrontierPolicy(nn.Module):
@@ -16,26 +16,26 @@ class FrontierPolicy(nn.Module):
     def reset(self) -> None:
         self.waypoint_selector.reset()
     
-    def _get_waypoint(self, value_map: np.ndarray) -> List:
-        ret, thresh = cv2.threshold(value_map, 0.1, 1.0, cv2.THRESH_BINARY)
-        thresh = remove_small_objects(thresh.astype(bool), min_size=180).astype(np.uint8)
-        nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(thresh, connectivity=8)
+    # def _get_waypoint(self, value_map: np.ndarray) -> List:
+    #     ret, thresh = cv2.threshold(value_map, 0.1, 1.0, cv2.THRESH_BINARY)
+    #     thresh = remove_small_objects(thresh.astype(bool), min_size=180).astype(np.uint8)
+    #     nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(thresh, connectivity=8)
         
-        avg_values = []
-        for i in range(1, nb_components):
-            tmp = value_map * (output == i)
-            avg_value = tmp.sum() / (tmp != 0).sum()
-            avg_values.append((i, avg_value))
-        avg_values = sorted(avg_values, key=lambda x: x[1], reverse=True)
+    #     avg_values = []
+    #     for i in range(1, nb_components):
+    #         tmp = value_map * (output == i)
+    #         avg_value = tmp.sum() / (tmp != 0).sum()
+    #         avg_values.append((i, avg_value))
+    #     avg_values = sorted(avg_values, key=lambda x: x[1], reverse=True)
         
-        if len(avg_values) >= 3000:
-            top_idx = [item[0] for item in avg_values[:3]]
-        else:
-            top_idx = [avg_values[0][0]]
-        top_centroids = centroids[top_idx]
-        waypoints = [(int(item[1]), int(item[0])) for item in top_centroids]
+    #     if len(avg_values) >= 3000:
+    #         top_idx = [item[0] for item in avg_values[:3]]
+    #     else:
+    #         top_idx = [avg_values[0][0]]
+    #     top_centroids = centroids[top_idx]
+    #     waypoints = [(int(item[1]), int(item[0])) for item in top_centroids]
         
-        return waypoints
+    #     return waypoints
     
     def _sort_waypoints_by_value(self, frontiers: np.ndarray, value_map: np.ndarray, position: np.ndarray) -> List:
         nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(frontiers)
