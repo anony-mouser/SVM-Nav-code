@@ -4,14 +4,16 @@ import torch.nn as nn
 from typing import List
 from collections import Sequence
 from scipy.spatial.distance import cdist
-from skimage.morphology import remove_small_objects
-from vlnce_baselines.models.frontier_waypoint_selector import WaypointSelector
+from vlnce_baselines.utils.map_utils import get_nearest_nonzero_waypoint
+# from vlnce_baselines.models.frontier_waypoint_selector import WaypointSelector
+from vlnce_baselines.models.vanilla_waypoint_selector import WaypointSelector
 
 
 class FrontierPolicy(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, config) -> None:
         super().__init__()
-        self.waypoint_selector = WaypointSelector()
+        self.config = config
+        self.waypoint_selector = WaypointSelector(config)
         
     def reset(self) -> None:
         self.waypoint_selector.reset()
@@ -37,7 +39,8 @@ class FrontierPolicy(nn.Module):
         
     #     return waypoints
     
-    def _sort_waypoints_by_value(self, frontiers: np.ndarray, value_map: np.ndarray, position: np.ndarray) -> List:
+    def _sort_waypoints_by_value(self, frontiers: np.ndarray, value_map: np.ndarray, 
+                                 floor: np.ndarray, traversible: np.ndarray, position: np.ndarray) -> List:
         nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(frontiers)
         centroids = centroids[1:]
         tmp_waypoints = [[int(item[1]), int(item[0])] for item in centroids]
@@ -45,10 +48,12 @@ class FrontierPolicy(nn.Module):
         for waypoint in tmp_waypoints:
             value = value_map[waypoint[0], waypoint[1]]
             if value == 0:
-                nearest_waypoint = self._get_nearest_nonzero_waypoint(value_map.astype(bool), waypoint)
+                target_area = np.logical_and(value_map.astype(bool), traversible)
+                nearest_waypoint = get_nearest_nonzero_waypoint(target_area, waypoint)
                 waypoints.append(nearest_waypoint)
             else:
                 waypoints.append(waypoint)
+                
         waypoints_value = [[waypoint, value_map[waypoint[0], waypoint[1]]] for waypoint in waypoints]
         waypoints_value = sorted(waypoints_value, key=lambda x: x[1], reverse=True)
         if len(waypoints_value) > 0:
@@ -60,16 +65,20 @@ class FrontierPolicy(nn.Module):
         
         return sorted_waypoints, sorted_values
     
-    def _get_nearest_nonzero_waypoint(self, arr: np.ndarray, start: Sequence) -> np.ndarray:
-        nonzero_indices = np.argwhere(arr != 0)
-        distances = cdist([start], nonzero_indices)
-        nearest_index = np.argmin(distances)
+    # def _get_nearest_nonzero_waypoint(self, arr: np.ndarray, start: Sequence) -> np.ndarray:
+    #     nonzero_indices = np.argwhere(arr != 0)
+    #     distances = cdist([start], nonzero_indices)
+    #     nearest_index = np.argmin(distances)
         
-        return np.array(nonzero_indices[nearest_index])
+    #     return np.array(nonzero_indices[nearest_index])
     
-    def forward(self, frontiers: np.ndarray, value_map: np.ndarray, position: np.ndarray):
-        sorted_waypoints, sorted_values = self._sort_waypoints_by_value(frontiers, value_map, position)
+    def forward(self, frontiers: np.ndarray, value_map: np.ndarray, collision_map: np.ndarray, 
+                floor: np.ndarray, traversible: np.ndarray, position: np.ndarray):
+        sorted_waypoints, sorted_values = self._sort_waypoints_by_value(frontiers, value_map, 
+                                                                        floor, traversible, position)
+        # best_waypoint, best_value, sorted_waypoints = \
+        #     self.waypoint_selector(sorted_waypoints, sorted_values, position)
         best_waypoint, best_value, sorted_waypoints = \
-            self.waypoint_selector(sorted_waypoints, sorted_values, position)
+            self.waypoint_selector(sorted_waypoints, position, collision_map, value_map)
         
         return best_waypoint, best_value, sorted_waypoints

@@ -1,4 +1,5 @@
 import os
+import re
 import gzip
 import json
 import time
@@ -87,7 +88,7 @@ def generate_prompts(start_idx, num=None):
     with gzip.open(R2R_VALUNSEEN_PATH, 'r') as f:
         eps_data = json.loads(f.read().decode('utf-8'))
     eps_data = eps_data["episodes"]
-    random.shuffle(eps_data)
+    # random.shuffle(eps_data)
     if num is None:
         episodes = eps_data[start_idx : ]
     else:
@@ -99,7 +100,14 @@ def generate_prompts(start_idx, num=None):
         prompts[id] = prompt_template + f"\"\"\"{instruction}\"\"\""
     
     return prompts
-        
+
+
+def natural_sort_key(s):
+    sub_strings = re.split(r'(\d+)', s)
+    sub_strings = [int(c) if c.isdigit() else c for c in sub_strings]
+    
+    return sub_strings
+
 
 def main():
     client = OpenAI(
@@ -108,7 +116,8 @@ def main():
     )
     
     if os.path.exists(DIR_NAME):
-        all_exist_files = sorted(os.listdir(DIR_NAME), reverse=True)
+        all_exist_files = sorted(os.listdir(DIR_NAME), key=natural_sort_key, reverse=True)
+        print(all_exist_files)
         if len(all_exist_files) > 0:
             current_file = all_exist_files[0]
             file_path = os.path.join(DIR_NAME, current_file)
@@ -119,9 +128,9 @@ def main():
         file_path = ''
     
     start_idx = check_llm_replys(file_path)
-    prompts = generate_prompts(start_idx, num=10)
+    prompts = generate_prompts(start_idx=700, num=1)
     
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         results = [executor.submit(get_reply, client, id, prompt) for id, prompt in prompts.items()]
         query2res = {job.result()[0]: job.result()[1] for job in as_completed(results)}
         

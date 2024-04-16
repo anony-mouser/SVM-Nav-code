@@ -284,10 +284,10 @@ class Semantic_Mapping(nn.Module):
         else:
             self.last_loc = self.curr_loc
             
-        if step == 12:
-            self.feat[:, 0, :] = 1.0
-            for e in range(self.num_environments):
-                self.local_map[e, 0, ...] = 0.0
+        # if step == 12:
+        #     self.feat[:, 0, :] = 1.0
+        #     for e in range(self.num_environments):
+        #         self.local_map[e, 0, ...] = 0.0
                 
         locs = self.local_pose.cpu().numpy()
         self.state[:, :3] = locs + self.origins
@@ -337,13 +337,13 @@ class Semantic_Mapping(nn.Module):
                                         self.lmb[e, 2]:self.lmb[e, 3]]
                 self.local_pose[e] = self.full_pose[e] - \
                     torch.from_numpy(self.origins[e]).to(self.device).float()
-        frontiers = find_frontiers(self.full_map[0].cpu().numpy(), detected_classes)
-        if self.print_images:
-            plt.imshow(np.flipud(frontiers))
-            save_dir = os.path.join(self.args.RESULTS_DIR, "frontiers/eps_%d"%current_episode_id)
-            os.makedirs(save_dir, exist_ok=True)
-            fn = "{}/step-{}.png".format(save_dir, step)
-            plt.savefig(fn)
+        # frontiers = find_frontiers(self.full_map[0].cpu().numpy(), detected_classes)
+        # if self.print_images:
+        #     plt.imshow(np.flipud(frontiers))
+        #     save_dir = os.path.join(self.args.RESULTS_DIR, "frontiers/eps_%d"%current_episode_id)
+        #     os.makedirs(save_dir, exist_ok=True)
+        #     fn = "{}/step-{}.png".format(save_dir, step)
+        #     plt.savefig(fn)
                 
         if self.visualize:
             self._visualize(current_episode_id, 
@@ -356,7 +356,7 @@ class Semantic_Mapping(nn.Module):
         
         return (self.full_map.cpu().numpy(), 
                 self.full_pose.cpu().numpy(), 
-                frontiers, 
+                # frontiers, 
                 self.one_step_full_map.cpu().numpy())
     
     def _visualize(self, 
@@ -517,7 +517,7 @@ class Semantic_Mapping(nn.Module):
         pool = nn.AvgPool2d(self.du_scale)
         # obs[:, 4, ...] = 0.
         self.min_z = int(25 / z_resolution - min_h) # 25 / 5 - (-8) = 13
-        self.min_z = 2
+        # self.min_z = 2 # use grounded-sam to detect floor
         self.feat[:, 1:, :] = pool(obs[:, 4:, :, :]).view(bs, c - 4, h // self.du_scale * w // self.du_scale)
 
         # self.init_grid: [bs, categories + 1, x=vr, y=vr, z=(max_height - min_height)] => [bs, 17, 100, 100, 80]

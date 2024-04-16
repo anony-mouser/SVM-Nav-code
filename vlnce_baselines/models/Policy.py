@@ -35,7 +35,7 @@ class FusionMapPolicy(nn.Module):
             else torch.device("cpu")
         )
         
-        self.frontier_policy = FrontierPolicy()
+        self.frontier_policy = FrontierPolicy(config)
         self.superpixel_policy = SuperPixelPolicy(config)
         self.max_destination_socre = -1e5
         self.fixed_destination = None
@@ -52,6 +52,7 @@ class FusionMapPolicy(nn.Module):
                     full_pose: Sequence, 
                     waypoint: np.ndarray, 
                     map: np.ndarray, 
+                    traversible: np.ndarray, 
                     collision_map: np.ndarray,
                     step: int,
                     current_episode_id: int,
@@ -122,7 +123,7 @@ class FusionMapPolicy(nn.Module):
         # objects = get_objects(map)
         # obstacles = get_obstacle(map)
         # traversible = 1 - (objects + obstacles)
-        traversible = get_traversible_area(map, classes)
+        # traversible = get_traversible_area(map, classes)
         # traversible = get_floor_area(map, classes)
         traversible[collision_map == 1] = 0
         planner = FMMPlanner(traversible, visualize=self.visualize)
@@ -143,16 +144,17 @@ class FusionMapPolicy(nn.Module):
         elif stop and self.fixed_destination is None:
             action = 2 # 这种情况后续考虑改成选择次优waypoint
         else:
-            relative_angle, action = angle_and_direction(heading_vector, waypoint_vector, self.turn_angle + 1)
+            relative_angle, action = angle_and_direction(heading_vector, waypoint_vector, self.turn_angle)
         
         if self.visualize:
             normalized_data = ((planner.fmm_dist - np.min(planner.fmm_dist)) / 
                             (np.max(planner.fmm_dist) - np.min(planner.fmm_dist)) * 255).astype(np.uint8)
             normalized_data = np.stack((normalized_data,) * 3, axis=-1)
-            normalized_data = cv2.circle(normalized_data, (int(x), int(y)), radius=5, color=(255,0,0), thickness=2)
+            normalized_data = cv2.circle(normalized_data, (int(x), int(y)), radius=5, color=(255,0,0), thickness=1)
             normalized_data = cv2.circle(normalized_data, (waypoint[1], waypoint[0]), 
-                                         radius=5, color=(0,0,255), thickness=2)
+                                         radius=5, color=(0,0,255), thickness=1)
             cv2.imshow("fmm distance field", np.flipud(normalized_data))
+            
             cv2.waitKey(1)
         if self.print_images:
             save_dir = os.path.join(self.config.RESULTS_DIR, "fmm_fields/eps_%d"%current_episode_id)
@@ -170,6 +172,8 @@ class FusionMapPolicy(nn.Module):
                             detected_classes: OrderedSet, 
                             one_step_full_map: np.ndarray, 
                             full_map: np.ndarray, 
+                            floor: np.ndarray,
+                            traversible: np.ndarray,
                             current_detection: sv.Detections, step: int):
         check = [item in detected_classes for item in destinations]
         if sum(check) == 0:
@@ -208,13 +212,14 @@ class FusionMapPolicy(nn.Module):
             # plt.savefig("/data/ckh/Zero-Shot-VLN-FusionMap/tests/destination_mask/mask%d.png"%step)
             # np.save("/data/ckh/Zero-Shot-VLN-FusionMap/tests/destination_mask/mask%d.npy"%step, destination_mask)
             
-            destination_waypoint = process_destination(destination_map, full_map, detected_classes)
+            # destination_waypoint = process_destination(destination_map, full_map, detected_classes)
+            destination_waypoint = process_destination2(destination_map, floor, traversible)
             confidence_part = destination_confidence / self.max_destination_confidence
             value_part = current_value / max_value
             score = (confidence_part + value_part) / 2.0
             print("value part: ", value_part)
             print("confidence part: ", confidence_part)
-            if score >= 0.5 and current_value >= 0.15 and destination_waypoint is not None:
+            if score >= 0.5 and current_value >= 0.25 and destination_waypoint is not None:
                 candidates.append((destination_waypoint, score))
             else:
                 candidates.append((None, -1e5))
@@ -228,6 +233,8 @@ class FusionMapPolicy(nn.Module):
                 value_map: np.ndarray, 
                 collision_map: np.ndarray,
                 full_map: np.ndarray, 
+                floor: np.ndarray,
+                traversible: np.ndarray,
                 full_pose: Sequence, 
                 frontiers: np.ndarray, 
                 detected_classes: OrderedSet,
@@ -242,7 +249,8 @@ class FusionMapPolicy(nn.Module):
         x, y, heading = full_pose
         x, y = x * (100 / self.resolution), y * (100 / self.resolution)
         position = np.array([y, x])
-        best_waypoint, best_value, sorted_waypoints = self.frontier_policy(frontiers, value_map, position)
+        best_waypoint, best_value, sorted_waypoints = self.frontier_policy(frontiers, value_map, collision_map,
+                                                                           floor, traversible, position)
         # best_waypoint, best_value, sorted_waypoints = self.superpixel_policy(full_map, value_map, collision_map,
         #                                                                      detected_classes, position,
         #                                                                      step, current_episode_id)
@@ -254,7 +262,7 @@ class FusionMapPolicy(nn.Module):
         if search_destination:
             destination_waypoint, score = self._search_destination(destination, classes, current_value, max_value,
                                                                    detected_classes, one_step_full_map, 
-                                                                   full_map, current_detection, step)
+                                                                   full_map, floor, traversible, current_detection, step)
             if destination_waypoint is not None and score > self.max_destination_socre:
                 print("!!!!!!!find destination: ", destination_waypoint)
                 self.fixed_destination = destination_waypoint
@@ -263,16 +271,19 @@ class FusionMapPolicy(nn.Module):
                 self.max_destination_socre = score
                 
             if self.fixed_destination is not None:
-                action = self._get_action(full_pose, self.fixed_destination, 
-                                          full_map, collision_map, step, current_episode_id, detected_classes,
+                action = self._get_action(full_pose, self.fixed_destination, full_map, 
+                                          traversible, collision_map, 
+                                          step, current_episode_id, detected_classes,
                                           search_destination)
             else:
-                action = self._get_action(full_pose, best_waypoint, 
-                                          full_map, collision_map, step, current_episode_id, detected_classes,
+                action = self._get_action(full_pose, best_waypoint, full_map, 
+                                          traversible, collision_map, 
+                                          step, current_episode_id, detected_classes, 
                                           search_destination)
         else:
-            action = self._get_action(full_pose, best_waypoint, 
-                                      full_map, collision_map, step, current_episode_id, detected_classes,
+            action = self._get_action(full_pose, best_waypoint, full_map, 
+                                      traversible, collision_map, 
+                                      step, current_episode_id, detected_classes, 
                                       search_destination)
         
         if self.visualize:

@@ -115,8 +115,8 @@ _C.TASK.TOP_DOWN_MAP_VLNCE.FOG_OF_WAR.VISIBILITY_DIST = 5.0
 # ----------------------------------------------------------------------------
 # DATASET EXTENSIONS
 # ----------------------------------------------------------------------------
-# _C.DATASET.EPISODES_ALLOWED = [701]
-_C.DATASET.EPISODES_ALLOWED = [389]
+_C.DATASET.EPISODES_ALLOWED = [701]
+# _C.DATASET.EPISODES_ALLOWED = [389]
 
 
 def get_extended_config(

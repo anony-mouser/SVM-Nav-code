@@ -121,7 +121,7 @@ base_classes = [
     "chair", "couch", "plant", "bed", "toilet", 
     "tv", "table", "oven", "sink", "refrigerator", 
     "book", "clock", "vase", "cup", "bottle",
-    "wall", "floor"
+    "wall"
 ]
 
 

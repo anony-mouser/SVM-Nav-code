@@ -1,5 +1,5 @@
 import attr
-import copy
+import time
 from typing import Any, Union, List, Tuple
 from abc import ABCMeta, abstractmethod
 
@@ -12,6 +12,8 @@ from habitat import Config
 import supervision as sv
 from groundingdino.util.inference import Model
 from segment_anything import sam_model_registry, SamPredictor
+
+from vlnce_baselines.map.RepViTSAM.setup_repvit_sam import build_sam_repvit
 
 
 VisualObservation = Union[torch.Tensor, np.ndarray]
@@ -43,6 +45,7 @@ class GroundedSAM(Segment):
         GROUNDING_DINO_CHECKPOINT_PATH = config.MAP.GROUNDING_DINO_CHECKPOINT_PATH
         SAM_CHECKPOINT_PATH = config.MAP.SAM_CHECKPOINT_PATH
         SAM_ENCODER_VERSION = config.MAP.SAM_ENCODER_VERSION
+        RepViTSAM_CHECKPOINT_PATH = config.MAP.RepViTSAM_CHECKPOINT_PATH
         device = torch.device("cuda", config.TORCH_GPU_ID if torch.cuda.is_available() else "cpu")
         
         self.grounding_dino_model = Model(
@@ -50,7 +53,11 @@ class GroundedSAM(Segment):
             model_checkpoint_path=GROUNDING_DINO_CHECKPOINT_PATH,
             device=device
             )
-        sam = sam_model_registry[SAM_ENCODER_VERSION](checkpoint=SAM_CHECKPOINT_PATH).to(device=device)
+        if config.MAP.REPVITSAM:
+            sam = build_sam_repvit(checkpoint=RepViTSAM_CHECKPOINT_PATH)
+            sam.to(device=device)
+        else:
+            sam = sam_model_registry[SAM_ENCODER_VERSION](checkpoint=SAM_CHECKPOINT_PATH).to(device=device)
         self.sam_predictor = SamPredictor(sam)
         self.box_threshold = config.MAP.BOX_THRESHOLD
         self.text_threshold = config.MAP.TEXT_THRESHOLD
@@ -93,25 +100,30 @@ class GroundedSAM(Segment):
         box_annotator = sv.BoxAnnotator()
         mask_annotator = sv.MaskAnnotator()
         labels = []
-        
+        t1 = time.time()
         detections = self.grounding_dino_model.predict_with_classes(
             image=image,
             classes=classes,
             box_threshold=self.box_threshold,
             text_threshold=self.text_threshold
         )
+        t2 = time.time()
         detections = self._process_detections(detections)
         for _, _, confidence, class_id, _ in detections:
             if class_id is not None:
                 labels.append(f"{classes[class_id]} {confidence:0.2f}")
             else:
                 labels.append(f"unknow {confidence:0.2f}")
-                
+        t3 = time.time()
         detections.mask = self._segment(
             sam_predictor=self.sam_predictor,
             image=cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
             xyxy=detections.xyxy
         )
+        t4 = time.time()
+        print("grounding dino: ", t2 - t1)
+        print("process detections: ", t3 - t2)
+        print("sam: ", t4 - t3)
         # annotated_image.shape=(h,w,3)
         annotated_image = mask_annotator.annotate(scene=image.copy(), detections=detections)
         annotated_image = box_annotator.annotate(scene=annotated_image, detections=detections, labels=labels)

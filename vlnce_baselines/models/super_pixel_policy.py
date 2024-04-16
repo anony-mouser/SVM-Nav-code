@@ -24,10 +24,10 @@ class SuperPixelPolicy(nn.Module):
     def reset(self) -> None:
         self.waypoint_selector.reset()
     
-    def _get_sorted_regions(self, full_map: np.ndarray, value_map: np.ndarray, collision_map: np.ndarray,
-                            detected_classes: OrderedSet) -> List:
-        floor = process_floor(full_map, detected_classes)
-        traversible = get_traversible_area(full_map, detected_classes)
+    def _get_sorted_regions(self, full_map: np.ndarray, floor: np.ndarray, traversible: np.ndarray, 
+                            value_map: np.ndarray, collision_map: np.ndarray, detected_classes: OrderedSet) -> List:
+        # floor = process_floor(full_map, detected_classes)
+        # traversible = get_traversible_area(full_map, detected_classes)
         t1 = time.time()
         valid_mask = value_map.astype(bool)
         min_val = np.min(value_map)

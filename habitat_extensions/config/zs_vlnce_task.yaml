@@ -1,6 +1,6 @@
 SEED: 0
 ENVIRONMENT:
-  MAX_EPISODE_STEPS: 250
+  MAX_EPISODE_STEPS: 800
 SIMULATOR:
   ACTION_SPACE_CONFIG: v1
   AGENT_0:
@@ -11,7 +11,7 @@ SIMULATOR:
   TURN_ANGLE: 30
   HABITAT_SIM_V0:
     GPU_DEVICE_ID: 0
-    ALLOW_SLIDING: True
+    ALLOW_SLIDING: False
   RGB_SENSOR:
     WIDTH: 640
     HEIGHT: 480
@@ -66,4 +66,4 @@ DATASET:
   SPLIT: val_unseen
   DATA_PATH: data/datasets/R2R_VLNCE_v1-3_preprocessed/{split}/{split}.json.gz
   SCENES_DIR: data/scene_datasets/
-  LLM_REPLYS_PATH: data/datasets/LLM_REPLYS/llm_reply_valunseen1.json
+  LLM_REPLYS_PATH: data/datasets/LLM_REPLYS/llm_reply_valunseen37.json

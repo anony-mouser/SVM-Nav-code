@@ -36,7 +36,7 @@ class ConstraintsMonitor(nn.Module):
         use VQA to check scene type
         """
         image = Image.fromarray(obs['rgb'].astype(np.uint8))
-        question = f"can you see the {scene}"
+        question = f"Are you in the {scene}"
         image = self.vis_processors(image).unsqueeze(0).to(self.device)
         question = self.text_processors(question)
         samples = {"image": image, "text_input": question}
@@ -68,15 +68,25 @@ class ConstraintsMonitor(nn.Module):
         position_vector = current_position - last_position
         displacement = np.linalg.norm(position_vector)
         heading_vector = angle_to_vector(heading)
+        rotation_matrix = np.array([[0, -1], 
+                                [1, 0]])
+        heading_vector = np.dot(rotation_matrix, heading_vector)
+        if np.array_equal(position_vector, np.array([0., 0.])):
+            return False
         degrees, direction = angle_and_direction(heading_vector, position_vector, self.turn_angle + 1)
-        degrees = 180 - degrees
-        if degrees == 0 or degrees == 180 or direction == 1:
-            movement = 'forward'
+        print("!!!!!degrees: ", degrees)
+        print("!!!!!current pose: ", current_pose)
+        print("!!!!!last pose: ", last_pose)
+        print("!!!!!position vector: ", position_vector)
+        if degrees >= 120:
+            movement = "around"
+        elif degrees == 0 or degrees == 180 or direction == 1:
+            movement = "forward"
         else:
             if direction == 2:
-                movement = 'left'
+                movement = "left"
             elif direction == 3:
-                movement = 'right'
+                movement = "right"
         if object == movement and displacement >= 0.5 * 100 / self.resolution:
             return True
         else:

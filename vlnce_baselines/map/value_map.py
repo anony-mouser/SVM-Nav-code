@@ -83,8 +83,8 @@ class ValueMap(nn.Module):
         mask = np.zeros(self.shape)
         confidence_mask = np.zeros(self.shape)
         heading = (360 - heading) % 360
-        angle_high = (heading + 79.0 / 2) % 360
-        angle_low = (heading - 79.0 / 2) % 360
+        angle_high = (heading + self.hfov / 2) % 360
+        angle_low = (heading - self.hfov / 2) % 360
         heading = np.ones(self.shape) * heading
         heading_vector = self._angle_to_vector(heading)
 
@@ -99,7 +99,7 @@ class ValueMap(nn.Module):
 
         confidence = self._calculate_confidence(theta)
 
-        valid_distance = distance <= 100
+        valid_distance = distance <= self.radius * 100 / self.resolution
         if angle_high > angle_low:
             valid_angle = (angle_low <= angle) & (angle <= angle_high)
         else:
@@ -145,6 +145,7 @@ class ValueMap(nn.Module):
     def forward(self,
                 step: int,
                 full_map: np.ndarray, 
+                floor: np.ndarray,
                 collision_map: np.ndarray,
                 blip_value: np.ndarray,
                 full_pose: Sequence,
@@ -161,9 +162,10 @@ class ValueMap(nn.Module):
         # self.current_floor = process_floor(full_map, kernel_size=3)
         # self.current_floor = np.logical_or(get_floor_area(full_map), self.previous_floor)
         # self.previous_floor = self.current_floor
-        self.current_floor = get_floor_area(full_map, classes)
+        # self.current_floor = get_floor_area(full_map, classes)
+        self.current_floor = floor
         self.current_floor[collision_map == 1] = 0
-        self.current_floor = remove_small_objects(self.current_floor, min_size=64)
+        # self.current_floor = remove_small_objects(self.current_floor, min_size=64)
         position = full_pose[:2] * (100 / self.resolution)
         heading = full_pose[-1]
         mask, confidence_mask = self._create_sector_mask(position, heading)

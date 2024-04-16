@@ -120,10 +120,10 @@ class VLNCEDatasetV1(Dataset):
         if llm_replys_filename:
             with open(llm_replys_filename, 'r') as f:
                 llm_replys = json.load(f)
-        if config.EPISODES_ALLOWED is not None:
-            config.defrost()
-            config.EPISODES_ALLOWED = list(map(lambda x: int(x), list(llm_replys.keys())))
-            config.freeze()
+        # if config.EPISODES_ALLOWED is not None:
+        #     config.defrost()
+        #     config.EPISODES_ALLOWED = list(map(lambda x: int(x), list(llm_replys.keys())))
+        #     config.freeze()
             
         self.instruction_vocab = VocabDict(
             word_list=deserialized["instruction_vocab"]["word_list"]

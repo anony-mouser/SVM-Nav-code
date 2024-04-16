@@ -51,6 +51,90 @@ def get_grid(pose: torch.Tensor, grid_size: Tuple, device: torch.device):
     return rot_grid, trans_grid
 
 
+def get_mask(sx, sy, scale, step_size):
+    size = int(step_size // scale) * 2 + 1 # size=11
+    mask = np.zeros((size, size)) # (11,11)
+    for i in range(size):
+        for j in range(size):
+            if ((i + 0.5) - (size // 2 + sx)) ** 2 + \
+               ((j + 0.5) - (size // 2 + sy)) ** 2 <= \
+                    step_size ** 2 \
+               and ((i + 0.5) - (size // 2 + sx)) ** 2 + \
+               ((j + 0.5) - (size // 2 + sy)) ** 2 > \
+                    (step_size - 1) ** 2:
+                mask[i, j] = 1
+
+    mask[size // 2, size // 2] = 1
+    return mask
+
+
+def get_dist(sx, sy, scale, step_size):
+    size = int(step_size // scale) * 2 + 1
+    mask = np.zeros((size, size)) + 1e-10
+    for i in range(size):
+        for j in range(size):
+            if ((i + 0.5) - (size // 2 + sx)) ** 2 + \
+               ((j + 0.5) - (size // 2 + sy)) ** 2 <= \
+                    step_size  ** 2:
+                mask[i, j] = max(5,
+                                 (((i + 0.5) - (size // 2 + sx)) ** 2 +
+                                  ((j + 0.5) - (size // 2 + sy)) ** 2) ** 0.5)
+    return mask
+
+
+def create_sector_mask(position: Sequence, heading: float, radius: float,
+                       angle: float, map_shape: Sequence):
+    """ 
+    arg "position" came from full pose, full pose use standard Cartesian coordinate.
+    """
+    mask = np.zeros(map_shape)
+    heading = (360 - heading) % 360
+    angle_high = (heading + angle / 2) % 360
+    angle_low = (heading - angle / 2) % 360
+
+    y, x = np.meshgrid(np.arange(map_shape[0]) - position[0], np.arange(map_shape[1]) - position[1])
+    distance = np.sqrt(x**2 + y**2)
+    angle = np.arctan2(x, y) * 180 / np.pi
+    angle = (360 - angle) % 360
+
+    valid_distance = distance <= radius
+    if angle_high > angle_low:
+        valid_angle = (angle_low <= angle) & (angle <= angle_high)
+    else:
+        valid_angle = (angle_low <= angle) | (angle <= angle_high)
+    mask[valid_distance & valid_angle] = 1
+
+    return mask
+
+
+def get_collision_mask(known_vector: np.ndarray, mask_data: np.ndarray, angle_threshold: float):
+    collision_map = np.zeros_like(mask_data)
+    center = np.array(mask_data.shape) // 2
+
+    rows, cols = np.indices(mask_data.shape)
+    rows_from_center = rows - center[0]
+    cols_from_center = cols - center[1]
+
+    nonzero_indices = np.nonzero(mask_data)
+
+    vectors = np.array([rows_from_center[nonzero_indices], cols_from_center[nonzero_indices]])
+    vector_lengths = np.linalg.norm(vectors, axis=0)
+    known_vector_length = np.linalg.norm(known_vector)
+    rotation_matrix = np.array([[0, -1], 
+                                [1, 0]])
+    known_vector = np.dot(rotation_matrix, known_vector)
+    known_vector_expanded = np.tile(known_vector[:, np.newaxis], vectors.shape[1])
+    
+    cos_angles = np.sum(known_vector_expanded * vectors, axis=0) / (known_vector_length * vector_lengths + 1e-10)
+    angles_rad = np.arccos(np.clip(cos_angles, -1.0, 1.0))
+    angles_deg = np.degrees(angles_rad)
+    print("angles: ", angles_deg)
+    collision_map[nonzero_indices[0][angles_deg <= angle_threshold], 
+                  nonzero_indices[1][angles_deg <= angle_threshold]] = 1
+
+    return collision_map
+
+
 def process_navigable_classes(classes: List):
     classes = [item.strip().lower() for item in classes]
     common_items = set(navigable_classes) & set(classes)
@@ -248,6 +332,22 @@ def process_destination(destination: np.ndarray, full_map: np.ndarray, classes: 
     else:
         return None
 
+def process_destination2(destination: np.ndarray, floor: np.ndarray, traversible: np.ndarray) -> np.ndarray:
+    """ 
+    destination could be some small objects, so we dilate them first
+    and then remove small objects
+    """
+    destination = dilation(destination, selem=disk(5))
+    destination = remove_small_objects(destination.astype(bool), min_size=64).astype(np.uint8)
+    nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(destination)
+    if len(centroids) > 1:
+        centroid = centroids[1] # the first one is background
+        waypoint = np.array([int(centroid[1]), int(centroid[0])])
+        waypoint = get_nearest_nonzero_waypoint(np.logical_and(floor, traversible), waypoint)
+        return waypoint
+    else:
+        return None
+
 
 def angle_and_direction(a: np.ndarray, b: np.ndarray, turn_angle: float) -> Tuple:
     unit_a = a / (np.linalg.norm(a) + 1e-5)
@@ -259,14 +359,17 @@ def angle_and_direction(a: np.ndarray, b: np.ndarray, turn_angle: float) -> Tupl
     angle = np.arccos(dot_product)
     angle_degrees = np.degrees(angle)
     
-    if cross_product > 0 and angle_degrees > (turn_angle / 2):
+    if cross_product > 0 and angle_degrees >= (turn_angle / 2 + 0.01):
         direction = 3 # right
-    elif cross_product < 0 and angle_degrees > (turn_angle / 2):
+        print("turn right", angle_degrees)
+    elif cross_product < 0 and angle_degrees >= (turn_angle / 2):
         direction = 2 # left
+        print("turn left", angle_degrees)
     elif cross_product == 0 and angle_degrees == 180:
         direction = 3
     else:
         direction = 1 # forward
+        print("go forward", angle_degrees, cross_product)
     
     return angle_degrees, direction
 
@@ -296,20 +399,23 @@ def closest_point_within_threshold(points_array: np.ndarray, target_point: np.nd
 def collision_check(last_pose: np.ndarray, current_pose: np.ndarray,
                     resolution: float, map_shape: Sequence,
                     collision_threshold: float=0.2,
-                    width: float=0.25, height: float=0.25) -> np.ndarray:
+                    width: float=0.4, height: float=1.5, buf: float=0.2) -> np.ndarray:
     last_position, last_heading = get_agent_position(last_pose, resolution)
     x0, y0 = last_position
     current_position, _ = get_agent_position(current_pose, resolution)
     position_vector = current_position - last_position
     displacement = np.linalg.norm(position_vector)
     collision_map = np.zeros(map_shape)
+    print("displacement: ", displacement)
     
     if displacement < collision_threshold * 100 / resolution:
         print("!!!!!!!!! COLLISION !!!!!!!!!")
         theta = np.deg2rad(last_heading)
         width_range = int(width * 100 / resolution)
         height_range = int(height * 100 / resolution)
-        buf = 0.9 * collision_threshold * 100 / resolution
+        # width_range = int((0.25 - displacement) * 100 / resolution * 2)
+        # height_range = int((0.25 - displacement) * 100 / resolution * 2)
+        buf = displacement * 100 / resolution + 3
         
         for i in range(height_range):
             for j in range(width_range):
@@ -321,6 +427,70 @@ def collision_check(last_pose: np.ndarray, current_pose: np.ndarray,
                 y1 = int(y0 + dy)
                 x1, y1 = threshold_poses([x1, y1], collision_map.shape)
                 collision_map[x1, y1] = 1
+                
+                dy = l1 * np.cos(theta) - l2 * np.sin(theta) # change to ndarray coordinate
+                dx = l1 * np.sin(theta) + l2 * np.cos(theta) # change to ndarray coordinate
+                x1 = int(x0 - dx)
+                y1 = int(y0 + dy)
+                x1, y1 = threshold_poses([x1, y1], collision_map.shape)
+                collision_map[x1, y1] = 1
+        collision_map = closing(collision_map, selem=disk(1))
+        
+    return collision_map
+
+# def collision_check_fmm(last_pose: np.ndarray, current_pose: np.ndarray,
+#                     resolution: float, map_shape: Sequence,
+#                     collision_threshold: float=0.2,
+#                     width: float=0.4, height: float=1.5, buf: float=0.2) -> np.ndarray:
+#     last_position, last_heading = get_agent_position(last_pose, resolution)
+#     current_position, current_heading = get_agent_position(current_pose, resolution)
+#     x, y = current_position
+#     position_vector = current_position - last_position
+#     displacement = np.linalg.norm(position_vector)
+#     collision_map = np.zeros(map_shape)
+#     print("displacement: ", displacement)
+    
+#     if displacement < collision_threshold * 100 / resolution:
+#         print("!!!!!!!!! COLLISION !!!!!!!!!")
+#         dx, dy = x - int(x), y - int(y)
+#         mask = get_mask(dx, dy, scale=1, step_size=5)
+#         direction_mask = create_sector_mask((5, 5), current_pose[-1], 6, 45, (11,11))
+#         collision_mask = np.logical_and(mask, direction_mask)
+#         x, y = int(x), int(y)
+#         print("!!!!!!!!!!!!!!!! collision x and y: ", x, y)
+#         collision_map[x - 5 : x + 6, y - 5: y + 6] = collision_mask
+#         collision_map[5,5] = 0
+        
+#         cv2.imshow("direction mask: ", (np.flipud(direction_mask * 255)).astype(np.uint8))
+#         cv2.imshow("mask: ", (np.flipud(mask * 255)).astype(np.uint8))
+#         cv2.imshow("collision mask: ", (np.flipud(collision_mask * 255)).astype(np.uint8))
+#         cv2.waitKey(1)
+    
+#     return collision_map
+
+def collision_check_fmm(last_pose: np.ndarray, current_pose: np.ndarray,
+                    resolution: float, map_shape: Sequence,
+                    collision_threshold: float=0.2,
+                    width: float=0.4, height: float=1.5, buf: float=0.2) -> np.ndarray:
+    last_position, last_heading = get_agent_position(last_pose, resolution)
+    current_position, current_heading = get_agent_position(current_pose, resolution)
+    x, y = current_position
+    position_vector = current_position - last_position
+    displacement = np.linalg.norm(position_vector)
+    collision_map = np.zeros(map_shape)
+    collision_mask = None
+    print("displacement: ", displacement)
+    
+    if displacement < collision_threshold * 100 / resolution:
+        print("!!!!!!!!! COLLISION !!!!!!!!!")
+        dx, dy = x - int(x), y - int(y)
+        mask = get_mask(dx, dy, scale=1, step_size=5)
+        heading_vector = angle_to_vector(current_heading)
+        collision_mask = get_collision_mask(heading_vector, mask, 30)
+        x, y = int(x), int(y)
+        collision_map[x - 5 : x + 6, y - 5: y + 6] = collision_mask
+        cv2.imshow("mask: ", (np.flipud(mask * 255)).astype(np.uint8))
+        cv2.imshow("collision mask: ", (np.flipud(collision_mask * 255)).astype(np.uint8))
     
     return collision_map
         
