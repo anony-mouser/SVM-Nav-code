@@ -12,7 +12,8 @@ from vlnce_baselines.config.default import get_config
 
 
 def main():
-    local_rank = int(os.environ["LOCAL_RANK"])
+    # local_rank = int(os.environ["LOCAL_RANK"])
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--exp_name",
