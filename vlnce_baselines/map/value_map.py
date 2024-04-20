@@ -199,8 +199,9 @@ class ValueMap(nn.Module):
         self.vis_image = add_text(self.vis_image, "Confidence Mask", (520, 50))
         self.vis_image = add_text(self.vis_image, "Value Map", (1020, 50))
         
-        cv2.imshow("info", self.vis_image)
-        cv2.waitKey(1)
+        # cv2.imshow("info", self.vis_image)
+        # cv2.waitKey(1)
+        cv2.imwrite('img_debug/value_map.png', self.vis_image)
         
         if self.print_images:
             save_dir = os.path.join(self.config.RESULTS_DIR, "floor_confidence_value/eps_%d"%current_episode_id)

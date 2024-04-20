@@ -462,8 +462,9 @@ class Semantic_Mapping(nn.Module):
         cv2.drawContours(self.vis_image, [agent_arrow], 0, color, -1) # draw agent arrow
         
         if self.visualize:
-            cv2.imshow("Thread 1", self.vis_image)
-            cv2.waitKey(1)
+            cv2.imwrite('img_debug/ref.png', self.vis_image)
+            # cv2.imshow("Thread 1", self.vis_image)
+            # cv2.waitKey(1)
             
         if self.print_images:
             result_dir = self.args.RESULTS_DIR

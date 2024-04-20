@@ -44,8 +44,9 @@ class FMMPlanner:
             normalized_data = ((dist - np.min(dist)) / 
                             (np.max(dist) - np.min(dist)) * 255).astype(np.uint8)
             normalized_data = np.stack((normalized_data,) * 3, axis=-1)
-            cv2.imshow("padded dist", np.flipud(normalized_data))
-            cv2.waitKey(1)
+            # cv2.imwrite('img_debug/dist.png', np.flipud(normalized_data))
+            # cv2.imshow("padded dist", np.flipud(normalized_data))
+            # cv2.waitKey(1)
         x, y = int(agent_position[0]), int(agent_position[1])
         dx, dy = agent_position[0] - x, agent_position[1] - y
         mask = get_mask(dx, dy, scale=1, step_size=5)
@@ -70,9 +71,9 @@ class FMMPlanner:
             valid_subset = subset_vis[subset_vis != 255]
             valid_subset = (255 * (valid_subset - np.min(valid_subset)) / (np.max(valid_subset) - np.min(valid_subset)))
             subset_vis[subset_vis != 255] = valid_subset
-            cv2.imshow("subset", np.flipud(subset_vis.astype(np.uint8)))
-            cv2.imshow("subset2", np.flipud(dist[x - 5 : x + 6, y - 5: y + 6].astype(np.uint8)))
-            cv2.waitKey(1)
+            # cv2.imshow("subset", np.flipud(subset_vis.astype(np.uint8)))
+            # cv2.imshow("subset2", np.flipud(dist[x - 5 : x + 6, y - 5: y + 6].astype(np.uint8)))
+            # cv2.waitKey(1)
         
         (stg_x, stg_y) = np.unravel_index(np.argmin(subset), subset.shape)
         offset_x, offset_y = stg_x - 5, stg_y - 5

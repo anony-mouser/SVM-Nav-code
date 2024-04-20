@@ -118,8 +118,9 @@ class SuperPixelPolicy(nn.Module):
         for waypoint in waypoints:
             cv2.circle(res, (waypoint[1], waypoint[0]), radius=2, color=(0,0,0), thickness=-1)
         
-        cv2.imshow("super pixel", np.flipud(res))
-        cv2.waitKey(1)
+        # cv2.imshow("super pixel", np.flipud(res))
+        # cv2.waitKey(1)
+        cv2.imwrite('img_debug/super_pixel.png', np.flipud(res))
         
         if self.print_images:
             save_dir = os.path.join(self.config.RESULTS_DIR, "super_pixel/eps_%d"%current_episode_id)

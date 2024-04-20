@@ -489,8 +489,10 @@ def collision_check_fmm(last_pose: np.ndarray, current_pose: np.ndarray,
         collision_mask = get_collision_mask(heading_vector, mask, 30)
         x, y = int(x), int(y)
         collision_map[x - 5 : x + 6, y - 5: y + 6] = collision_mask
-        cv2.imshow("mask: ", (np.flipud(mask * 255)).astype(np.uint8))
-        cv2.imshow("collision mask: ", (np.flipud(collision_mask * 255)).astype(np.uint8))
+        # cv2.imshow("mask: ", (np.flipud(mask * 255)).astype(np.uint8))
+        # cv2.imshow("collision mask: ", (np.flipud(collision_mask * 255)).astype(np.uint8))
+        # cv2.imwrite('img_debug/mask.png', (np.flipud(mask * 255)).astype(np.uint8))
+        # cv2.imwrite('img_debug/collision_mask.png', (np.flipud(collision_mask * 255)).astype(np.uint8))
     
     return collision_map
         

@@ -153,7 +153,8 @@ class FusionMapPolicy(nn.Module):
             normalized_data = cv2.circle(normalized_data, (int(x), int(y)), radius=5, color=(255,0,0), thickness=1)
             normalized_data = cv2.circle(normalized_data, (waypoint[1], waypoint[0]), 
                                          radius=5, color=(0,0,255), thickness=1)
-            cv2.imshow("fmm distance field", np.flipud(normalized_data))
+            # cv2.imshow("fmm distance field", np.flipud(normalized_data))
+            cv2.imwrite('img_debug/dist_field.png', np.flipud(normalized_data))
             
             cv2.waitKey(1)
         if self.print_images:
@@ -314,8 +315,8 @@ class FusionMapPolicy(nn.Module):
         map_vis = cv2.circle(map_vis, (best_waypoint[1], best_waypoint[0]), radius=5, color=(0,255,0), thickness=1)
         map_vis = np.flipud(map_vis)
         self.vis_image[:, :] = map_vis
-        cv2.imshow("waypoints", self.vis_image)
-        cv2.waitKey(1)
+        # cv2.imshow("waypoints", self.vis_image)
+        # cv2.waitKey(1)
         
         if self.print_images:
             save_dir = os.path.join(self.config.RESULTS_DIR, "waypoints/eps_%d"%current_episode_id)

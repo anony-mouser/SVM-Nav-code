@@ -356,7 +356,8 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         image = cv2.drawContours(image, contours, -1, (255, 255, 255), thickness=2)
         frontiers = np.logical_and(floor, image)
         frontiers = remove_small_objects(frontiers.astype(bool), min_size=64)
-        cv2.imshow("frontiers", np.flipud(frontiers.astype(np.uint8) * 255))
+        # cv2.imshow("frontiers", np.flipud(frontiers.astype(np.uint8) * 255))
+        # cv2.imwrite('img_debug/frontiers.png', np.flipud(frontiers.astype(np.uint8) * 255))
         
         res = np.logical_xor(floor, traversible)
         nb_components, output, _, _ = cv2.connectedComponentsWithStats(res.astype(np.uint8))
@@ -621,8 +622,8 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             self.mapping_module.one_step_local_map.fill_(0.)
             
             self.traversible, self.floor, self.frontiers = self._process_map(full_map[0])
-            cv2.imshow("collision_map", (np.flipud(self.collision_map * 255)).astype(np.uint8))
-            cv2.waitKey(1)
+            # cv2.imshow("collision_map", (np.flipud(self.collision_map * 255)).astype(np.uint8))
+            # cv2.waitKey(1)
             # cv2.imshow("self.traversible", np.flipud(self.traversible.astype(np.uint8) * 255))
             # cv2.imshow("self.floor", np.flipud(self.floor.astype(np.uint8) * 255))
             # cv2.imshow("self.frontiers", np.flipud(self.frontiers.astype(np.uint8) * 255))
