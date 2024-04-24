@@ -74,10 +74,6 @@ class ConstraintsMonitor(nn.Module):
         if np.array_equal(position_vector, np.array([0., 0.])):
             return False
         degrees, direction = angle_and_direction(heading_vector, position_vector, self.turn_angle + 1)
-        print("!!!!!degrees: ", degrees)
-        print("!!!!!current pose: ", current_pose)
-        print("!!!!!last pose: ", last_pose)
-        print("!!!!!position vector: ", position_vector)
         if degrees >= 120:
             movement = "around"
         elif degrees == 0 or degrees == 180 or direction == 1:

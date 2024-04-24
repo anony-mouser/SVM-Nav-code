@@ -100,30 +100,30 @@ class GroundedSAM(Segment):
         box_annotator = sv.BoxAnnotator()
         mask_annotator = sv.MaskAnnotator()
         labels = []
-        t1 = time.time()
+        # t1 = time.time()
         detections = self.grounding_dino_model.predict_with_classes(
             image=image,
             classes=classes,
             box_threshold=self.box_threshold,
             text_threshold=self.text_threshold
         )
-        t2 = time.time()
+        # t2 = time.time()
         detections = self._process_detections(detections)
         for _, _, confidence, class_id, _ in detections:
             if class_id is not None:
                 labels.append(f"{classes[class_id]} {confidence:0.2f}")
             else:
                 labels.append(f"unknow {confidence:0.2f}")
-        t3 = time.time()
+        # t3 = time.time()
         detections.mask = self._segment(
             sam_predictor=self.sam_predictor,
             image=cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
             xyxy=detections.xyxy
         )
-        t4 = time.time()
-        print("grounding dino: ", t2 - t1)
-        print("process detections: ", t3 - t2)
-        print("sam: ", t4 - t3)
+        # t4 = time.time()
+        # print("grounding dino: ", t2 - t1)
+        # print("process detections: ", t3 - t2)
+        # print("sam: ", t4 - t3)
         # annotated_image.shape=(h,w,3)
         annotated_image = mask_annotator.annotate(scene=image.copy(), detections=detections)
         annotated_image = box_annotator.annotate(scene=annotated_image, detections=detections, labels=labels)

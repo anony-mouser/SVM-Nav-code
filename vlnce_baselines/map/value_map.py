@@ -177,7 +177,8 @@ class ValueMap(nn.Module):
         if self.visualize:
             self._visualize(step, current_episode_id)
         
-    
+        return self.value_map[1]
+        
     def _visualize(self, step: int, current_episode_id: int):
         confidence_mask_vis = cv2.convertScaleAbs(self.value_map[0] * 255)
         confidence_mask_vis = np.stack((confidence_mask_vis,) * 3, axis=-1)

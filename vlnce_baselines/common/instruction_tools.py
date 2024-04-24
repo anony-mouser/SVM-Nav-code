@@ -16,7 +16,7 @@ dones = 0
 
 prompt_template = f"""Parse a navigation instruction delimited by triple quotes and your task is to perform the following actions:
 1. Extract Destination: Understand the entire instruction and summarize a description of the destination. The description should be a sentence containing landmark and roomtype.
-2. Split instructions: Split the instruction into a series of sub-instructions according to the execution steps. Each sub-instruction should contain a landmark.
+2. Split instructions: Split the instruction into a series of sub-instructions according to the execution steps. Each sub-instruction contain one landmark.
 3. Infer agent's state constraints: Infer the state constraints that the agent should satisfy for each sub-instruction. There're thee constraint types: location constraints, diretion constraints, object constraints. You need to select an appropriate constraint type and give the corresponding constraint object. Direction constraint object has two types: left, right. Constraints can format as a tuple: (constraint type, constraint object)
 4. Make a decision: Analyze the landmarks, actions, and directions in each sub-instruction to determine how the agent should act. For a landmark, the agent has three options: approach, move away, or approach and then move away. For direction, the agent has three options: turn left, turn right, or go forward
 Provide your answer in JSON format with the following details:
@@ -27,11 +27,12 @@ Provide your answer in JSON format with the following details:
 5. the value of decisions is a nested JSON. The first level JSON's key is index start from zero and it;s value is second level JONS with keys: landmarks, directions. The value of landmarks is a list of tuples, each tuple contains (landmark, action). The value of directions is a list of direction choice for each sub-instruction.
 An Example:
 User: "exit exercise room to living room, turn slight left, walk behind couch, turn right and walk behind couch, turn left into dining room. Stop next to 2 chairs at glass table."
-You: {{"destination": "two chairs near glass table in dining room","sub-instructions":["exit exercise room and go to living room","turn left and walk behind couch", "turn right and walk behind couch", "turn left and go to dining room", "stop next to two chairs near glass table"],"state-constraints":{{0: [("location constraint", "living room")], 1: [("direction constraint", "left"),("object constraint", "couch")], 2: [("direction constraint", "right"),("object constraint", "couch")], 3: [("direction constraint", "left"), ("location constraint", "dining room")], 4: [("object constraint", "chairs"),("object constraint", "table")]}},"decisions":{{0: {{"landmarks":[("exercise room", "move away"), ("living room", "approach")],"directions":["forward"]}}, 1:{{"landmarks":[("couch", "approach")],"directions":["left"]}}, 2:{{"landmarks":[("couch", "approach")],"directions":["right"]}}, 3:{{"landmarks":[("dining room", "approach")],"directions":["left"]}}, 4:{{"landmarks":[("chair", "approach")],"directions":["forward"]}}}}}}
+You: {{"destination": "two chairs near glass table in dining room","sub-instructions":["exit exercise room and go to living room","turn left and walk behind couch", "turn right and walk behind couch", "turn left and go to dining room", "stop next to two chairs near glass table"],"state-constraints":{{0: [("location constraint", "living room")], 1: [("direction constraint", "left"),("object constraint", "couch")], 2: [("direction constraint", "right"),("object constraint", "couch")], 3: [("direction constraint", "left"), ("location constraint", "dining room")], 4: [("object constraint", "chairs"),("object constraint", "table")]}},"decisions":{{0: {{"landmarks":[("exercise room", "move away"), ("living room", "approach")],"directions":["forward"]}}, 1:{{"landmarks":[("couch", "approach")],"directions":["left"]}}, 2:{{"landmarks":[("couch", "approach")],"directions":["right"]}}, 3:{{"landmarks":[("dining room", "approach")],"directions":["left"]}}, 4:{{"landmarks":[("chairs", "approach"),("table", "approach")],"directions":["forward"]}}}}}}
 ATTENTION:
-1. constraint type: location constraint, object constraint, directions constraint
+1. constraint type: location constraint is for room type, object constraint is for object type, directions constraint. Don't confuse object constriant with location constraint!
 2. landmark choice: approach, move away, approach then move away
 3. direction choice: left, right, forward
+4. don't keep the description of the landmark, for example: the bottom of the steps -> steps; sliding glass door -> door; room with bed -> bed; white rug -> rug
 """
 
 
@@ -71,28 +72,25 @@ def get_reply(client, id, prompt, max_retry_times=3, retry_interval_initial=1):
     return id, reply
 
 
-def check_llm_replys(path):
+def check_exist_replys(path):
     if os.path.exists(path):
         with open(path, 'r') as f:
             existing_data = json.load(f)
-        keys = list(existing_data.keys())
-        keys = [int(k) for k in keys]
-        max_key = max(keys)
+        exist_keys = list(existing_data.keys())
+        exist_keys = [int(k) for k in exist_keys]
         
-        return max_key
+        return exist_keys
     else:
-        return 0
+        return []
 
 
-def generate_prompts(start_idx, num=None):
+def generate_prompts(exist_replys, num=None):
     with gzip.open(R2R_VALUNSEEN_PATH, 'r') as f:
         eps_data = json.loads(f.read().decode('utf-8'))
     eps_data = eps_data["episodes"]
-    # random.shuffle(eps_data)
-    if num is None:
-        episodes = eps_data[start_idx : ]
-    else:
-        episodes = eps_data[start_idx : start_idx + num]
+    eps_data = [item for item in eps_data if item["episode_id"] not in exist_replys]
+    random.shuffle(eps_data)
+    episodes = random.sample(eps_data, num)
     prompts = {}
     for episode in episodes:
         id = episode["episode_id"]
@@ -100,6 +98,19 @@ def generate_prompts(start_idx, num=None):
         prompts[id] = prompt_template + f"\"\"\"{instruction}\"\"\""
     
     return prompts
+
+
+def generate_specific_prompts(id: int):
+    with gzip.open(R2R_VALUNSEEN_PATH, 'r') as f:
+        eps_data = json.loads(f.read().decode('utf-8'))
+    eps_data = eps_data["episodes"]
+    prompts = {}
+    for episode in eps_data:
+        if episode["episode_id"] == id:
+            instruction = episode["instruction"]["instruction_text"]
+            prompts[id] = prompt_template + f"\"\"\"{instruction}\"\"\""
+    
+    return prompts  
 
 
 def natural_sort_key(s):
@@ -117,7 +128,6 @@ def main():
     
     if os.path.exists(DIR_NAME):
         all_exist_files = sorted(os.listdir(DIR_NAME), key=natural_sort_key, reverse=True)
-        print(all_exist_files)
         if len(all_exist_files) > 0:
             current_file = all_exist_files[0]
             file_path = os.path.join(DIR_NAME, current_file)
@@ -127,8 +137,8 @@ def main():
         os.makedirs(DIR_NAME, exist_ok=True)
         file_path = ''
     
-    start_idx = check_llm_replys(file_path)
-    prompts = generate_prompts(start_idx=700, num=1)
+    exist_replys = check_exist_replys(file_path)
+    prompts = generate_prompts(exist_replys, num=30)
     
     with ThreadPoolExecutor(max_workers=5) as executor:
         results = [executor.submit(get_reply, client, id, prompt) for id, prompt in prompts.items()]

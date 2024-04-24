@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import torch.nn as nn
 from typing import List
+from fast_slic import Slic
 from collections import Sequence
 from scipy.spatial.distance import cdist
 from vlnce_baselines.utils.map_utils import *
@@ -10,6 +11,7 @@ from vlnce_baselines.utils.data_utils import OrderedSet
 from vlnce_baselines.models.superpixel_waypoint_selector import WaypointSelector
 
 import time
+from pyinstrument import Profiler
 
 
 class SuperPixelPolicy(nn.Module):
@@ -24,11 +26,11 @@ class SuperPixelPolicy(nn.Module):
     def reset(self) -> None:
         self.waypoint_selector.reset()
     
-    def _get_sorted_regions(self, full_map: np.ndarray, floor: np.ndarray, traversible: np.ndarray, 
-                            value_map: np.ndarray, collision_map: np.ndarray, detected_classes: OrderedSet) -> List:
+    def _get_sorted_regions(self, full_map: np.ndarray, traversible: np.ndarray, value_map: np.ndarray, 
+                            collision_map: np.ndarray, detected_classes: OrderedSet) -> List:
         # floor = process_floor(full_map, detected_classes)
         # traversible = get_traversible_area(full_map, detected_classes)
-        t1 = time.time()
+        # t1 = time.time()
         valid_mask = value_map.astype(bool)
         min_val = np.min(value_map)
         max_val = np.max(value_map)
@@ -53,7 +55,7 @@ class SuperPixelPolicy(nn.Module):
             value_mask = np.zeros_like(value_map)
             value_mask[waypoint[0] - 5: waypoint[0] + 5, waypoint[1] - 5: waypoint[1] + 5] = 1
             masked_value = value_mask * value_map
-            waypoint = get_nearest_nonzero_waypoint(np.logical_and(floor, traversible), waypoint)
+            waypoint = get_nearest_nonzero_waypoint(traversible, waypoint)
             if np.sum(collision_map) > 0:
                 nonzero_indices = np.argwhere(collision_map != 0)
                 distances = cdist([waypoint], nonzero_indices)
@@ -63,8 +65,46 @@ class SuperPixelPolicy(nn.Module):
             value_regions.append((mask, np.mean(masked_value[masked_value != 0]), waypoint))
         sorted_regions = sorted(value_regions, key=lambda x: x[1], reverse=True)
         waypoint_values =  np.array([item[1] for item in value_regions])
-        t2 = time.time()
-        print("real super pixel time: ", t2 - t1)
+        # t2 = time.time()
+        # print("real super pixel time: ", t2 - t1)
+        return sorted_regions
+
+    def _get_sorted_region_fast_slic(self, full_map: np.ndarray, traversible: np.ndarray, value_map: np.ndarray, 
+                            collision_map: np.ndarray, detected_classes: OrderedSet) -> List:
+        valid_mask = value_map.astype(bool)
+        min_val = np.min(value_map)
+        max_val = np.max(value_map)
+        normalized_values = (value_map - min_val) / (max_val - min_val + 1e-5)
+        normalized_values[value_map == 0] = 1
+        img = cv2.applyColorMap((normalized_values * 255).astype(np.uint8), cv2.COLORMAP_HOT)
+        slic = Slic(num_components=24**2, compactness=100)
+        assignment = slic.iterate(img)
+        valid_labels = np.unique(assignment * valid_mask)[1:]
+        value_regions = []
+        # t1 = time.time()
+        for label in valid_labels:
+            mask = np.zeros_like(value_map)
+            mask[assignment == label] = 1
+            nb_components, output, stats, centroids = \
+                cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+            if np.sum(output == 1) < 100:
+                continue
+            waypoint = np.array([int(centroids[1][1]), int(centroids[1][0])])
+            # if np.sum(collision_map) > 0:
+            #     nonzero_indices = np.argwhere(collision_map != 0)
+            #     distances = cdist([waypoint], nonzero_indices)
+            #     if np.min(distances) <= 5:
+            #         print("!!!!!!!!!!!!!!!!!waypoint close to collision area, change waypoint!")
+            #         continue
+            # waypoint = get_nearest_nonzero_waypoint(traversible, waypoint)
+            value_mask = np.zeros_like(value_map)
+            value_mask[waypoint[0] - 5: waypoint[0] + 5, waypoint[1] - 5: waypoint[1] + 5] = 1
+            masked_value = value_mask * value_map + 1e-10
+            value_regions.append((mask, np.mean(masked_value[masked_value != 0]), waypoint))
+        # t2 = time.time()
+        # print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! loop time: ", t2 - t1)
+        sorted_regions = sorted(value_regions, key=lambda x: x[1], reverse=True)
+        
         return sorted_regions
 
     def _sorted_waypoints(self, sorted_regions: List, top_k: int=3):
@@ -76,27 +116,27 @@ class SuperPixelPolicy(nn.Module):
         
         return waypoints, values
     
-    def forward(self, full_map: np.ndarray, value_map: np.ndarray, collision_map: np.ndarray,
-                detected_classes: OrderedSet, position: Sequence, step: int, current_episode_id: int):
+    def forward(self, full_map: np.ndarray, traversible: np.ndarray, value_map: np.ndarray, collision_map: np.ndarray,
+                detected_classes: OrderedSet, position: Sequence, fmm_dist: np.ndarray, step: int, current_episode_id: int):
         if np.sum(value_map.astype(bool)) < 20 * 20:
-            best_waypoint = position
-            best_value = 0
-            sorted_waypoints = [position]
+            best_waypoint = np.array([int(position[0]), int(position[1])])
+            best_value = 0.
+            sorted_waypoints = [np.array([int(position[0]), int(position[1])])]
             
             return best_waypoint, best_value, sorted_waypoints
         else:
-            t1 = time.time()
-            sorted_regions = self._get_sorted_regions(full_map, value_map, collision_map, detected_classes)
-            t2 = time.time()
-            print("super pixel time: ", t2 - t1)
+            # t1 = time.time()
+            sorted_regions = self._get_sorted_region_fast_slic(full_map, traversible, value_map, collision_map, detected_classes)
+            # t2 = time.time()
+            # print("super pixel time: ", t2 - t1)
             sorted_waypoints, sorted_values = self._sorted_waypoints(sorted_regions)
-            print("sorted_waypoints and sorted values: ", sorted_waypoints, sorted_values)
+            # print("sorted_waypoints and sorted values: ", sorted_waypoints, sorted_values)
             best_waypoint, best_value, sorted_waypoints = \
-                self.waypoint_selector(sorted_waypoints, position, collision_map, value_map)
+                self.waypoint_selector(sorted_waypoints, position, collision_map, value_map, fmm_dist, traversible)
                 
             if self.visualize:
                 self._visualize(sorted_regions, value_map, step, current_episode_id)
-            print("best value: ", best_value)
+            # print("best value: ", best_value)
             return best_waypoint, best_value, sorted_waypoints
     
     def _visualize(self, sorted_regions: List, value_map: np.ndarray, step: int, current_episode_id: int):

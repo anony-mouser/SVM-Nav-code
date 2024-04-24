@@ -24,8 +24,15 @@ class WaypointSelector(nn.Module):
         distances = np.linalg.norm(points - target_point, axis=1)
         
         return points[np.argmin(distances)]
+    
+    def _get_value(self, position: np.ndarray, value_map: np.ndarray) -> float:
+        x, y = position
+        value = value_map[x - 5 : x + 6, y - 5: y + 6]
+        value = np.mean(value[value != 0])
         
-    def forward(self, sorted_waypoints: np.ndarray, position: np.ndarray, 
+        return value
+        
+    def forward(self, sorted_waypoints: np.ndarray, frontiers: np.ndarray, position: np.ndarray, 
                 collision_map: np.ndarray, value_map: np.ndarray):
         best_waypoint, best_value = None, None
         invalid_waypoint = False
@@ -40,6 +47,13 @@ class WaypointSelector(nn.Module):
                 if np.min(distances) <= 5:
                     invalid_waypoint = True
                     print("################################################ close to collision")
+                
+            if np.sum(frontiers) > 0:
+                nonzero_indices = np.argwhere(frontiers != 0)
+                distances = cdist([self._last_waypoint], nonzero_indices)
+                if np.min(distances) >= 5 * 100 / self.resolution:
+                    invalid_waypoint = True
+                    print("################################################ too far from frontiers")
                     
             if np.linalg.norm(self._last_waypoint - position) <= self.distance_threshold:
                 """ 
@@ -61,14 +75,15 @@ class WaypointSelector(nn.Module):
             """ 
             do not change waypoint if last waypoint's value is not getting too worse
             """
-            curr_value = value_map[self._last_waypoint[0], self._last_waypoint[1]]
+            curr_value = self._get_value(self._last_waypoint, value_map)
+            # curr_value = value_map[self._last_waypoint[0], self._last_waypoint[1]]
             # if curr_value - self._last_value > -0.01:
             #     best_waypoint = self._last_waypoint
             #     best_value = curr_value
                 
-            if (np.linalg.norm(self._last_waypoint - position) > self.distance_threshold):
+            if (np.linalg.norm(self._last_waypoint - position) > self.distance_threshold and 
+                (curr_value - self._last_value > -0.03)):
                 best_waypoint = self._last_waypoint
-                best_value = curr_value
             else:
                 print("!!!!!!!! already achieve last waypoint")
         
@@ -80,18 +95,16 @@ class WaypointSelector(nn.Module):
                     continue
                 
                 best_waypoint= waypoint
-                best_value = value_map[waypoint[0], waypoint[1]]
                 break
         
         if best_waypoint is None:
             print("All waypoints are cyclic! Choosing the closest one.")
             best_waypoint = self.closest_point(sorted_waypoints, position)
-            best_value = value_map[waypoint[0], waypoint[1]]
             
         if value_map[best_waypoint[0], best_waypoint[1]] == 0:
             best_waypoint = get_nearest_nonzero_waypoint(value_map, best_waypoint)
-            best_value = value_map[best_waypoint[0], best_waypoint[1]]
-            
+        
+        best_value = self._get_value(best_waypoint, value_map)
         self._acyclic_enforcer.add_state_action(position, best_waypoint)
         self._last_value = best_value
         self._last_waypoint = best_waypoint

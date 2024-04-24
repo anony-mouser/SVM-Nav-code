@@ -1,4 +1,4 @@
-flag=" --exp_name exp1
+flag=" --exp_name exp_100trajs
       --run-type eval
       --exp-config vlnce_baselines/config/exp1.yaml
       NUM_ENVIRONMENTS 1

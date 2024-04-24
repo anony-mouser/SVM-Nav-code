@@ -343,7 +343,7 @@ def process_destination2(destination: np.ndarray, floor: np.ndarray, traversible
     if len(centroids) > 1:
         centroid = centroids[1] # the first one is background
         waypoint = np.array([int(centroid[1]), int(centroid[0])])
-        waypoint = get_nearest_nonzero_waypoint(np.logical_and(floor, traversible), waypoint)
+        waypoint = get_nearest_nonzero_waypoint(traversible, waypoint)
         return waypoint
     else:
         return None
@@ -486,13 +486,11 @@ def collision_check_fmm(last_pose: np.ndarray, current_pose: np.ndarray,
         dx, dy = x - int(x), y - int(y)
         mask = get_mask(dx, dy, scale=1, step_size=5)
         heading_vector = angle_to_vector(current_heading)
-        collision_mask = get_collision_mask(heading_vector, mask, 30)
+        collision_mask = get_collision_mask(heading_vector, mask, 32)
         x, y = int(x), int(y)
         collision_map[x - 5 : x + 6, y - 5: y + 6] = collision_mask
         # cv2.imshow("mask: ", (np.flipud(mask * 255)).astype(np.uint8))
         # cv2.imshow("collision mask: ", (np.flipud(collision_mask * 255)).astype(np.uint8))
-        # cv2.imwrite('img_debug/mask.png', (np.flipud(mask * 255)).astype(np.uint8))
-        # cv2.imwrite('img_debug/collision_mask.png', (np.flipud(collision_mask * 255)).astype(np.uint8))
     
     return collision_map
         

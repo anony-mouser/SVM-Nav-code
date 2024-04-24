@@ -72,13 +72,13 @@ class FrontierPolicy(nn.Module):
         
     #     return np.array(nonzero_indices[nearest_index])
     
-    def forward(self, frontiers: np.ndarray, value_map: np.ndarray, collision_map: np.ndarray, 
+    def forward(self, frontiers: np.ndarray, value_map: np.ndarray, collision_map: np.ndarray,
                 floor: np.ndarray, traversible: np.ndarray, position: np.ndarray):
         sorted_waypoints, sorted_values = self._sort_waypoints_by_value(frontiers, value_map, 
                                                                         floor, traversible, position)
         # best_waypoint, best_value, sorted_waypoints = \
         #     self.waypoint_selector(sorted_waypoints, sorted_values, position)
         best_waypoint, best_value, sorted_waypoints = \
-            self.waypoint_selector(sorted_waypoints, position, collision_map, value_map)
+            self.waypoint_selector(sorted_waypoints, frontiers, position, collision_map, value_map)
         
         return best_waypoint, best_value, sorted_waypoints
