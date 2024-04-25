@@ -99,8 +99,12 @@ class SuperPixelPolicy(nn.Module):
             # waypoint = get_nearest_nonzero_waypoint(traversible, waypoint)
             value_mask = np.zeros_like(value_map)
             value_mask[waypoint[0] - 5: waypoint[0] + 5, waypoint[1] - 5: waypoint[1] + 5] = 1
-            masked_value = value_mask * value_map + 1e-10
-            value_regions.append((mask, np.mean(masked_value[masked_value != 0]), waypoint))
+            masked_value = value_mask * value_map
+            # import pdb;pdb.set_trace()
+            if np.sum(masked_value) > 0:
+                value_regions.append((mask, np.mean(masked_value[masked_value != 0]), waypoint))
+            else:
+                value_regions.append((mask, 0., waypoint))
         # t2 = time.time()
         # print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! loop time: ", t2 - t1)
         sorted_regions = sorted(value_regions, key=lambda x: x[1], reverse=True)

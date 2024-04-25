@@ -11,14 +11,16 @@ class WaypointSelector(nn.Module):
         self.config = config
         self.resolution = config.MAP.MAP_RESOLUTION
         self.distance_threshold = 0.25 * 100 / self.resolution
-        
-        self.reset()
+        self._acyclic_enforcer = AcyclicEnforcer()
+        self._last_value = float("-inf")
+        self._last_waypoint = np.zeros(2)
+        self._stick_current_waypoint = False
         
     def reset(self) -> None:
         self._last_value = float("-inf")
         self._last_waypoint = np.zeros(2)
         self._stick_current_waypoint = False
-        self._acyclic_enforcer = AcyclicEnforcer()
+        self._acyclic_enforcer.reset()
         
     def closest_point(self, points: np.ndarray, target_point: np.ndarray) -> np.ndarray:
         distances = np.linalg.norm(points - target_point, axis=1)

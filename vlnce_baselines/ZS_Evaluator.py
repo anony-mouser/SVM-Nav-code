@@ -71,14 +71,14 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         self.current_episode_id = None
         self.current_detections = None
         self.max_constraint_steps = 25
-        self.min_constraint_steps = 8
+        self.min_constraint_steps = 10
         self.map_channels = map_channels
         self.floor = np.zeros(self.map_shape)
         self.frontiers = np.zeros(self.map_shape)
         self.traversible = np.zeros(self.map_shape)
         self.collision_map = np.zeros(self.map_shape)
         self.visited = np.zeros(self.map_shape)
-        self.base_classes = copy.deepcopy(base_classes)
+        self.base_classes = copy.deepcopy(base_classes) # 'chair', 'couch', 'plant', 'bed', 'toilet', 'tv', 'table', 'oven', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'cup', ...
         
     # for tensorboard
     # @property
@@ -322,11 +322,11 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         self.llm_reply = obs['llm_reply']
         self.sub_instructions = self.llm_reply['sub-instructions']
         self.sub_constraints = self.llm_reply['state-constraints']
-        self.destination = _get_first_destination(self.sub_constraints, self.llm_reply['destination'])
+        self.destination = _get_first_destination(self.sub_constraints, self.llm_reply['destination'])  #最近子指令目标
         # self.destination = self.sub_instructions[0]
-        self.last_destination = self.destination
+        self.last_destination = self.destination    #上一步子指令目标
         self.decisions = self.llm_reply['decisions']
-        first_landmarks = self.decisions['0']['landmarks']
+        first_landmarks = self.decisions['0']['landmarks']  #TODO 第一个decision没有landmark怎么办？例如turn around
         self.destination_class = [item[0] for item in first_landmarks]
         self.classes = self._process_classes(self.base_classes, self.destination_class)
         self.constraints_check = [False] * len(self.sub_constraints)
@@ -398,7 +398,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         self.mapping_module.one_step_full_map.fill_(0.)
         self.mapping_module.one_step_local_map.fill_(0.)
         
-        blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), self.destination)
+        blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), self.destination) #大小1x1
         blip_value = blip_value.detach().cpu().numpy()
         self.value_map_module(0, full_map[0], self.floor, self.collision_map, 
                               blip_value, full_pose[0], self.detected_classes, self.current_episode_id)
@@ -481,11 +481,11 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         current_pose = full_pose[0]
         self._action2 = None
         current_idx = self.constraints_check.index(False)
-        landmarks = self.decisions[str(current_idx)]['landmarks']
+        landmarks = self.decisions[str(current_idx)]['landmarks']   #第一个子指令中的landmark
         self.destination_class = [item[0] for item in landmarks]
-        self.classes = self._process_classes(self.base_classes, self.destination_class)
+        self.classes = self._process_classes(self.base_classes, self.destination_class) #将第一个子指令中的landmark加入classes
         current_constraint = self.sub_constraints[str(current_idx)]
-        all_constraint_types = [item[0] for item in current_constraint]
+        all_constraint_types = [item[0] for item in current_constraint] #direction, location, object
         
         for step in range(12, self.max_step):
             print("\nstep: ", step)
@@ -551,7 +551,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             #     self.destination = self.llm_reply['destination']
             # else:
             #     self.destination = new_destination
-            if self.destination != self.last_destination:
+            if self.destination != self.last_destination:   #如果上一步的destination到达了，则value map重新置0
                 self.value_map_module.value_map[...] = 0.
                 self.last_destination = self.destination
             
@@ -571,7 +571,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
             if dones[0]:
                 self._calculate_metric(infos)
                 break
-            
+            # 为下一次rollout准备
             batch_obs = self._batch_obs(obs)
             poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
             self.mapping_module(batch_obs, poses)

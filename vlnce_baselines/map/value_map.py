@@ -42,6 +42,7 @@ class ValueMap(nn.Module):
         self.vis_image = np.ones((580, 480 * 3 + 20 * 4, 3)).astype(np.uint8) * 255
         self.previous_floor = np.zeros(self.shape)
         self._load_model_from_disk()
+        self.model.eval()
     
     def _create_model(self):
         self.model, vis_processors, text_processors = \
@@ -135,6 +136,7 @@ class ValueMap(nn.Module):
         self.value_map = np.zeros((2, *self.shape))
         self.vis_image = np.ones((580, 480 * 3 + 20 * 4, 3)).astype(np.uint8) * 255
     
+    @torch.no_grad()
     def get_blip_value(self, image: Image, caption: str) -> torch.Tensor:
         img = self.vis_processors(image).unsqueeze(0).to(self.device)
         txt = self.text_processors(caption)

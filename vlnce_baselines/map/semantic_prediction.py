@@ -61,6 +61,7 @@ class GroundedSAM(Segment):
         self.sam_predictor = SamPredictor(sam)
         self.box_threshold = config.MAP.BOX_THRESHOLD
         self.text_threshold = config.MAP.TEXT_THRESHOLD
+        self.grounding_dino_model.model.eval()
         
     def _segment(self, sam_predictor: SamPredictor, image: np.ndarray, xyxy: np.ndarray) -> np.ndarray:
         sam_predictor.set_image(image)
@@ -95,6 +96,7 @@ class GroundedSAM(Segment):
             
         return detections
     
+    @torch.no_grad()
     def segment(self, image: VisualObservation, **kwargs) -> Tuple[np.ndarray, List[str], np.ndarray]:
         classes = kwargs.get("classes", [])
         box_annotator = sv.BoxAnnotator()

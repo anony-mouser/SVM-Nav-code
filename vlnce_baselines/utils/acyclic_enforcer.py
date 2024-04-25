@@ -17,6 +17,9 @@ class StateAction:
 
 class AcyclicEnforcer:
     history: Set[StateAction] = set()
+
+    def reset(self):
+        self.history = set()
     
     def check_cyclic(self, position: np.ndarray, waypoint: Any, threshold: float) -> bool:
         for item in self.history:
