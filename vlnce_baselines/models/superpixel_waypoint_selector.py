@@ -38,7 +38,7 @@ class WaypointSelector(nn.Module):
                 collision_map: np.ndarray, value_map: np.ndarray, fmm_dist: np.ndarray, traversible: np.ndarray):
         best_waypoint, best_value = None, None
         invalid_waypoint = False
-        print("last waypoint: ", self._last_waypoint, self._last_value)
+        # print("last waypoint: ", self._last_waypoint, self._last_value)
         if not np.array_equal(self._last_waypoint, np.zeros(2)):
             if np.sum(collision_map) > 0:
                 """ 
@@ -55,8 +55,8 @@ class WaypointSelector(nn.Module):
                 print("################################################ achieve")
             
             x, y = int(position[0]), int(position[1])
-            if fmm_dist is not None:
-                print("fmm dist: ", fmm_dist[x, y], np.max(fmm_dist))
+            # if fmm_dist is not None:
+            #     print("fmm dist: ", fmm_dist[x, y], np.max(fmm_dist))
             if fmm_dist is not None and np.mean(fmm_dist[x-10:x+11, y-10:y+11]) >= np.max(fmm_dist):
                 invalid_waypoint = True
                 print("################################################ created an enclosed area!")
@@ -107,6 +107,6 @@ class WaypointSelector(nn.Module):
         self._acyclic_enforcer.add_state_action(position, best_waypoint)
         self._last_value = best_value
         self._last_waypoint = best_waypoint
-        print("best waypoint: ", best_waypoint)
+        # print("best waypoint: ", best_waypoint)
         
         return best_waypoint, best_value, sorted_waypoints

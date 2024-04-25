@@ -36,6 +36,8 @@ from vlnce_baselines.common.constraints import ConstraintsMonitor
 from vlnce_baselines.utils.constant import base_classes, map_channels
 
 from pyinstrument import Profiler
+import warnings
+warnings.filterwarnings('ignore')
 
 
 
@@ -174,6 +176,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
     def _preprocess_state(self, state: np.ndarray) -> np.ndarray:
         state = state.transpose(1, 2, 0)
         rgb = state[:, :, :3].astype(np.uint8) #[3, h, w]
+        rgb = rgb[:,:,::-1] # RGB to BGR
         depth = state[:, :, 3:4] #[1, h, w]
         min_depth = self.config.TASK_CONFIG.SIMULATOR.DEPTH_SENSOR.MIN_DEPTH
         max_depth = self.config.TASK_CONFIG.SIMULATOR.DEPTH_SENSOR.MAX_DEPTH
@@ -320,6 +323,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
                 return llm_destination
         
         self.llm_reply = obs['llm_reply']
+        self.instruction = obs['instruction']['text']
         self.sub_instructions = self.llm_reply['sub-instructions']
         self.sub_constraints = self.llm_reply['state-constraints']
         self.destination = _get_first_destination(self.sub_constraints, self.llm_reply['destination'])  #最近子指令目标
@@ -489,7 +493,8 @@ class ZeroShotVlnEvaluator(BaseTrainer):
         
         for step in range(12, self.max_step):
             print("\nstep: ", step)
-            print(f"current sub instruction{current_idx}: {self.sub_instructions[current_idx]}")
+            print(f"instr: {self.instruction}")
+            print(f"sub_instr_{current_idx}: {self.sub_instructions[current_idx]}")
             constraint_steps += 1
             position = full_pose[0][:2] * 100 / self.resolution
             y, x = int(position[0]), int(position[1])
@@ -506,7 +511,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
                 check = self.constraints_monitor(current_constraint, obs[0], 
                                                 self.current_detections, self.classes, 
                                                 current_pose, start_check_pose)
-                print(current_constraint, check)
+                # print(current_constraint, check)
                 
                 if len(check) == 0:
                     print("empty constraint")
@@ -523,7 +528,7 @@ class ZeroShotVlnEvaluator(BaseTrainer):
                 if start_to_wait and (constraint_steps >= self.min_constraint_steps):
                     if False in self.constraints_check:
                         current_idx = self.constraints_check.index(False)
-                        print(f"current sub instruction{current_idx}: {self.sub_instructions[current_idx]}")
+                        print(f"sub_instr_{current_idx}: {self.sub_instructions[current_idx]}")
                         landmarks = self.decisions[str(current_idx)]['landmarks']
                         self.destination_class = [item[0] for item in landmarks]
                         self.classes = self._process_classes(self.base_classes, self.destination_class)

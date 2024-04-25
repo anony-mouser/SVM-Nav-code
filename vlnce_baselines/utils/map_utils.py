@@ -361,15 +361,15 @@ def angle_and_direction(a: np.ndarray, b: np.ndarray, turn_angle: float) -> Tupl
     
     if cross_product > 0 and angle_degrees >= (turn_angle / 2 + 0.01):
         direction = 3 # right
-        print("turn right", angle_degrees)
+        # print("turn right", angle_degrees)
     elif cross_product < 0 and angle_degrees >= (turn_angle / 2):
         direction = 2 # left
-        print("turn left", angle_degrees)
+        # print("turn left", angle_degrees)
     elif cross_product == 0 and angle_degrees == 180:
         direction = 3
     else:
         direction = 1 # forward
-        print("go forward", angle_degrees, cross_product)
+        # print("go forward", angle_degrees, cross_product)
     
     return angle_degrees, direction
 
