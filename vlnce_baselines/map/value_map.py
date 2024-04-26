@@ -204,7 +204,8 @@ class ValueMap(nn.Module):
         
         # cv2.imshow("info", self.vis_image)
         # cv2.waitKey(1)
-        cv2.imwrite('img_debug/value_map.png', self.vis_image)
+        if self.visualize:
+            cv2.imwrite('img_debug/value_map.png', self.vis_image)
         
         if self.print_images:
             save_dir = os.path.join(self.config.RESULTS_DIR, "floor_confidence_value/eps_%d"%current_episode_id)

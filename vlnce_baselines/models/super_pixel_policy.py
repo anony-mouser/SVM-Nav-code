@@ -164,7 +164,8 @@ class SuperPixelPolicy(nn.Module):
         
         # cv2.imshow("super pixel", np.flipud(res))
         # cv2.waitKey(1)
-        cv2.imwrite('img_debug/super_pixel.png', np.flipud(res))
+        if self.visualize:
+            cv2.imwrite('img_debug/super_pixel.png', np.flipud(res))
         
         if self.print_images:
             save_dir = os.path.join(self.config.RESULTS_DIR, "super_pixel/eps_%d"%current_episode_id)
