@@ -14,6 +14,7 @@ from groundingdino.util.inference import Model
 from segment_anything import sam_model_registry, SamPredictor
 
 from vlnce_baselines.map.RepViTSAM.setup_repvit_sam import build_sam_repvit
+from vlnce_baselines.common.utils import get_device
 
 
 VisualObservation = Union[torch.Tensor, np.ndarray]
@@ -22,12 +23,13 @@ VisualObservation = Union[torch.Tensor, np.ndarray]
 @attr.s(auto_attribs=True)
 class Segment(metaclass=ABCMeta):
     config: Config
+    device: torch.device
     
     def __attrs_post_init__(self):
-        self._create_model(self.config)
+        self._create_model(self.config, self.device)
     
     @abstractmethod
-    def _create_model(self, config: Config) -> None:
+    def _create_model(self, config: Config, device: torch.device) -> None:
         pass
     
     @abstractmethod
@@ -40,13 +42,13 @@ class GroundedSAM(Segment):
     height: float = 480.
     width: float = 640.
     
-    def _create_model(self, config: Config) -> Any:
+    def _create_model(self, config: Config, device: torch.device) -> Any:
         GROUNDING_DINO_CONFIG_PATH = config.MAP.GROUNDING_DINO_CONFIG_PATH
         GROUNDING_DINO_CHECKPOINT_PATH = config.MAP.GROUNDING_DINO_CHECKPOINT_PATH
         SAM_CHECKPOINT_PATH = config.MAP.SAM_CHECKPOINT_PATH
         SAM_ENCODER_VERSION = config.MAP.SAM_ENCODER_VERSION
         RepViTSAM_CHECKPOINT_PATH = config.MAP.RepViTSAM_CHECKPOINT_PATH
-        device = torch.device("cuda", config.TORCH_GPU_ID if torch.cuda.is_available() else "cpu")
+        # device = torch.device("cuda", config.TORCH_GPU_ID if torch.cuda.is_available() else "cpu")
         
         self.grounding_dino_model = Model(
             model_config_path=GROUNDING_DINO_CONFIG_PATH, 

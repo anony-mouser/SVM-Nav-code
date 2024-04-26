@@ -29,11 +29,11 @@ class FusionMapPolicy(nn.Module):
         self.resolution = config.MAP.MAP_RESOLUTION
         self.turn_angle = config.TASK_CONFIG.SIMULATOR.TURN_ANGLE
         
-        self.device = (
-            torch.device("cuda", self.config.TORCH_GPU_ID)
-            if torch.cuda.is_available()
-            else torch.device("cpu")
-        )
+        # self.device = (
+        #     torch.device("cuda", self.config.TORCH_GPU_ID)
+        #     if torch.cuda.is_available()
+        #     else torch.device("cpu")
+        # )
         
         # self.frontier_policy = FrontierPolicy(config)
         self.superpixel_policy = SuperPixelPolicy(config)

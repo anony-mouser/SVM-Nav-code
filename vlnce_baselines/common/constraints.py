@@ -11,13 +11,14 @@ from lavis.models import load_model_and_preprocess
 
 
 class ConstraintsMonitor(nn.Module):
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, device: torch.device) -> None:
         super().__init__()
         self.config = config
         self.resolution = config.MAP.MAP_RESOLUTION
         self.turn_angle = config.TASK_CONFIG.SIMULATOR.TURN_ANGLE
-        self.device = (torch.device("cuda", self.config.TORCH_GPU_ID) if 
-                       torch.cuda.is_available() else torch.device("cpu"))
+        self.device = device
+        # self.device = (torch.device("cuda", self.config.TORCH_GPU_ID) if 
+        #                torch.cuda.is_available() else torch.device("cpu"))
         self._load_from_disk()
         
     def _create_model(self):
@@ -27,7 +28,7 @@ class ConstraintsMonitor(nn.Module):
         self.text_processors = text_processors["eval"]
     
     def _load_from_disk(self):
-        self.model = torch.load(self.config.VQA_MODEL_DIR).to(self.device)
+        self.model = torch.load(self.config.VQA_MODEL_DIR, map_location='cpu').to(self.device)
         self.vis_processors = torch.load(self.config.VQA_VIS_PROCESSORS_DIR)["eval"]
         self.text_processors = torch.load(self.config.VQA_TEXT_PROCESSORS_DIR)["eval"]
         

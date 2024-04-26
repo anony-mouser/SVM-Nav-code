@@ -23,7 +23,8 @@ from vlnce_baselines.utils.visualization import *
 class ValueMap(nn.Module):
     def __init__(self, 
                  config: Config, 
-                 full_value_map_shape: Union[Tuple, List, np.ndarray]) -> None:
+                 full_value_map_shape: Union[Tuple, List, np.ndarray],
+                 device: torch.device) -> None:
         super(ValueMap, self).__init__()
         self.config = config
         self.shape = full_value_map_shape
@@ -37,8 +38,9 @@ class ValueMap(nn.Module):
         self.resolution = config.MAP.MAP_RESOLUTION
         self.hfov = config.TASK_CONFIG.SIMULATOR.DEPTH_SENSOR.HFOV
         self.radius = config.TASK_CONFIG.SIMULATOR.DEPTH_SENSOR.MAX_DEPTH
-        self.device = (torch.device("cuda", self.config.TORCH_GPU_ID) if 
-                       torch.cuda.is_available() else torch.device("cpu"))
+        self.device = device
+        # self.device = (torch.device("cuda", self.config.TORCH_GPU_ID) if 
+        #                torch.cuda.is_available() else torch.device("cpu"))
         self.vis_image = np.ones((580, 480 * 3 + 20 * 4, 3)).astype(np.uint8) * 255
         self.previous_floor = np.zeros(self.shape)
         self._load_model_from_disk()
@@ -55,7 +57,7 @@ class ValueMap(nn.Module):
         self.text_processors = text_processors["eval"]
         
     def _load_model_from_disk(self):
-        self.model = torch.load(self.config.BLIP2_MODEL_DIR).to(self.device)
+        self.model = torch.load(self.config.BLIP2_MODEL_DIR, map_location="cpu").to(self.device)
         self.vis_processors = torch.load(self.config.BLIP2_VIS_PROCESSORS_DIR)["eval"]
         self.text_processors = torch.load(self.config.BLIP2_TEXT_PROCESSORS_DIR)["eval"]
     

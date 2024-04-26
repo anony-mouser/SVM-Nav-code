@@ -13,7 +13,7 @@ from skimage.morphology import binary_closing
 
 import torch
 from torch import Tensor
-import torch.distributed as distr
+# import torch.distributed as distr
 from torchvision import transforms
 
 from habitat import Config, logger
@@ -30,7 +30,7 @@ from vlnce_baselines.utils.data_utils import OrderedSet
 from vlnce_baselines.map.mapping import Semantic_Mapping
 from vlnce_baselines.models.Policy import FusionMapPolicy
 from vlnce_baselines.common.env_utils import construct_envs
-from vlnce_baselines.common.utils import gather_list_and_concat
+from vlnce_baselines.common.utils import gather_list_and_concat, get_device
 from vlnce_baselines.map.semantic_prediction import GroundedSAM
 from vlnce_baselines.common.constraints import ConstraintsMonitor
 from vlnce_baselines.utils.constant import base_classes, map_channels
@@ -40,13 +40,13 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
-
 @baseline_registry.register_trainer(name="ZS-Evaluator-mp")
 class ZeroShotVlnEvaluatorMP(BaseTrainer):
     def __init__(self, config: Config, segment_module=None, mapping_module=None) -> None:
         super().__init__()
         
-        
+        self.device = get_device(config.TORCH_GPU_ID)
+        torch.cuda.set_device(self.device)
         self.config = config
         self.map_args = config.MAP
         self.resolution = config.MAP.MAP_RESOLUTION
@@ -56,12 +56,6 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         self.max_step = config.TASK_CONFIG.ENVIRONMENT.MAX_EPISODE_STEPS
         self.map_shape = (config.MAP.MAP_SIZE_CM // self.resolution,
                           config.MAP.MAP_SIZE_CM // self.resolution)
-        
-        self.device = (
-            torch.device("cuda", self.config.TORCH_GPU_ID)
-            if torch.cuda.is_available()
-            else torch.device("cpu")
-        )
         
         self.trans = transforms.Compose([transforms.ToPILImage(), 
                                          transforms.Resize(
@@ -99,28 +93,29 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         self.config.MAP.AGENT_HEIGHT = self.config.TASK_CONFIG.SIMULATOR.AGENT_0.HEIGHT
         self.config.MAP.NUM_ENVIRONMENTS = self.config.NUM_ENVIRONMENTS
         self.config.MAP.RESULTS_DIR = self.config.RESULTS_DIR
-        self.world_size = self.config.GPU_NUMBERS
+        self.world_size = self.config.world_size
         self.local_rank = self.config.local_rank
-        if self.world_size > 1:
-            distr.init_process_group(backend='nccl', init_method='env://')
-            self.device = self.config.TORCH_GPU_IDS[self.local_rank]
-            self.config.TORCH_GPU_ID = self.config.TORCH_GPU_IDS[self.local_rank]
+        # if self.world_size > 1:
+        #     distr.init_process_group(backend='nccl', init_method='env://')
+        #     self.device = self.config.TORCH_GPU_IDS[self.local_rank]
+        #     self.config.TORCH_GPU_ID = self.config.TORCH_GPU_IDS[self.local_rank]
         self.config.freeze()
-        torch.cuda.set_device(self.device)
         
     def _init_envs(self) -> None:
         print("start to initialize environments")
         
         """for DDP to load different data"""
-        self.config.defrost()
-        self.config.TASK_CONFIG.SEED = self.config.TASK_CONFIG.SEED + self.config.local_rank
-        self.config.freeze()
+        # self.config.defrost()
+        # self.config.TASK_CONFIG.SEED = self.config.TASK_CONFIG.SEED + self.config.local_rank
+        # self.config.freeze()
 
         self.envs = construct_envs(
             self.config, 
             get_env_class(self.config.ENV_NAME),
-            auto_reset_done=False
+            auto_reset_done=False,
+            episodes_allowed=self.config.TASK_CONFIG.DATASET.EPISODES_ALLOWED,
         )
+        print(f"local rank: {self.local_rank}, num of episodes: {self.envs.number_of_episodes}")
         self.detected_classes = OrderedSet()
         print("initializing environments finished!")
         
@@ -155,16 +150,16 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         
     def _initialize_policy(self) -> None:
         print("start to initialize policy")
-        
-        self.segment_module = GroundedSAM(self.config)
+        # print(type(self.device))
+        self.segment_module = GroundedSAM(self.config, self.device)
         self.mapping_module = Semantic_Mapping(self.config.MAP).to(self.device)
         self.mapping_module.eval()
         
-        self.value_map_module = ValueMap(self.config, self.mapping_module.map_shape)
+        self.value_map_module = ValueMap(self.config, self.mapping_module.map_shape, self.device)
         self.policy = FusionMapPolicy(self.config, self.mapping_module.map_shape[0])
         self.policy.reset()
         
-        self.constraints_monitor = ConstraintsMonitor(self.config)
+        self.constraints_monitor = ConstraintsMonitor(self.config, self.device)
         
     def _concat_obs(self, obs: Observations) -> np.ndarray:
         rgb = obs['rgb'].astype(np.uint8)
@@ -632,37 +627,37 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         for i in tqdm(range(eps_to_eval)):
             self.rollout()
             self.reset()
-            if i > 0 and i % 9 == 0:
-                split = self.config.TASK_CONFIG.DATASET.SPLIT
-                fname = os.path.join(self.config.EVAL_CKPT_PATH_DIR, 
-                                    f"stats_ep_ckpt_{split}_{i + 1}trajs.json"
-                                    )
-                with open(fname, "w") as f:
-                    json.dump(self.state_eps, f, indent=2)
+            # if i > 0 and i % 9 == 0:
+            #     split = self.config.TASK_CONFIG.DATASET.SPLIT
+            #     fname = os.path.join(self.config.EVAL_CKPT_PATH_DIR, 
+            #                         f"stats_ep_ckpt_{split}_{i + 1}trajs.json"
+            #                         )
+            #     with open(fname, "w") as f:
+            #         json.dump(self.state_eps, f, indent=2)
                     
         self.envs.close()
         
-        if self.world_size > 1:
-            distr.barrier()
+        # if self.world_size > 1:
+        #     distr.barrier()
             
-        num_episodes = len(self.state_eps)
-        for stat_key in next(iter(self.state_eps.values())).keys():
-            aggregated_states[stat_key] = (
-                sum(v[stat_key] for v in self.state_eps.values()) / num_episodes
-            )
+        # num_episodes = len(self.state_eps)
+        # for stat_key in next(iter(self.state_eps.values())).keys():
+        #     aggregated_states[stat_key] = (
+        #         sum(v[stat_key] for v in self.state_eps.values()) / num_episodes
+        #     )
             
-        total = torch.tensor(num_episodes).cuda()
-        if self.world_size > 1:
-            distr.reduce(total,dst=0)
-        total = total.item()
+        # total = torch.tensor(num_episodes).cuda()
+        # if self.world_size > 1:
+        #     distr.reduce(total,dst=0)
+        # total = total.item()
 
-        if self.world_size > 1:
-            logger.info(f"rank {self.local_rank}'s {num_episodes}-episode results: {aggregated_states}")
-            for k,v in aggregated_states.items():
-                v = torch.tensor(v*num_episodes).cuda()
-                cat_v = gather_list_and_concat(v,self.world_size)
-                v = (sum(cat_v)/total).item()
-                aggregated_states[k] = v
+        # if self.world_size > 1:
+        #     logger.info(f"rank {self.local_rank}'s {num_episodes}-episode results: {aggregated_states}")
+        #     for k,v in aggregated_states.items():
+        #         v = torch.tensor(v*num_episodes).cuda()
+        #         cat_v = gather_list_and_concat(v,self.world_size)
+        #         v = (sum(cat_v)/total).item()
+        #         aggregated_states[k] = v
         
         split = self.config.TASK_CONFIG.DATASET.SPLIT
         fname = os.path.join(self.config.EVAL_CKPT_PATH_DIR, 
@@ -671,12 +666,12 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         with open(fname, "w") as f:
             json.dump(self.state_eps, f, indent=2)
 
-        if self.local_rank < 1:
-            if self.config.EVAL.SAVE_RESULTS:
-                fname = os.path.join(self.config.EVAL_CKPT_PATH_DIR, f"stats_ckpt_{split}.json")
-                with open(fname, "w") as f:
-                    json.dump(aggregated_states, f, indent=2)
+        # if self.local_rank < 1:
+        #     if self.config.EVAL.SAVE_RESULTS:
+        #         fname = os.path.join(self.config.EVAL_CKPT_PATH_DIR, f"stats_ckpt_{split}.json")
+        #         with open(fname, "w") as f:
+        #             json.dump(aggregated_states, f, indent=2)
 
-            logger.info(f"Episodes evaluated: {total}")
+        #         logger.info(f"Episodes evaluated: {total}")
         t2 = time.time()
         print("test time: ", t2 - t1)
