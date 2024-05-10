@@ -9,7 +9,7 @@ from vlnce_baselines.utils.map_utils import get_mask, get_dist
 
 
 class FMMPlanner:
-    def __init__(self, traversible: np.ndarray, scale: int=1, step_size: int=5, visualize: bool=False) -> None:
+    def __init__(self, config, traversible: np.ndarray, scale: int=1, step_size: int=5, visualize: bool=False) -> None:
         self.scale = scale
         self.step_size = step_size
         self.visualize = visualize
@@ -24,6 +24,9 @@ class FMMPlanner:
 
         self.du = int(self.step_size / (self.scale * 1.)) # du=5
         self.fmm_dist = None
+        self.waypoint_threshold = config.EVAL.FMM_WAYPOINT_THRESHOLD
+        self.goal_threshold = config.EVAL.FMM_GOAL_THRESHOLD
+        self.resolution = config.MAP.MAP_RESOLUTION
         
     def set_goal(self, goal: np.ndarray) -> None:
         traversible_ma = ma.masked_values(self.traversible * 1, 0)
@@ -53,11 +56,16 @@ class FMMPlanner:
         x += pad
         y += pad
         subset = dist[x - 5 : x + 6, y - 5: y + 6].copy()
+        if subset.shape != mask.shape:
+            print("subset and mask have different shape")
+            print(f"subset shape:{subset.shape}, mask shape:{mask.shape}")
+            print(f"current positon:{agent_position}")
+            return x, y, True
         subset *= mask
         subset += (1 - mask) * 1e5
-        if subset[5, 5] < 2.0 * 100 / 5:
+        if subset[5, 5] < self.waypoint_threshold * 100 / self.resolution:
             stop = True
-        if fixed_destination is not None and subset[5, 5] < 1.5 * 100 / 5:
+        if fixed_destination is not None and subset[5, 5] < self.goal_threshold * 100 / self.resolution:
             stop = True
         else:
             stop = False

@@ -1,6 +1,7 @@
 import argparse
 import random
 import os
+import json
 
 import numpy as np
 import torch
@@ -66,6 +67,10 @@ def run_exp(exp_name: str, exp_config: str,
     config.VIDEO_DIR += exp_name
     config.LOG_FILE = exp_name + '_' + config.LOG_FILE
     config.local_rank = local_rank
+    with open(config.TASK_CONFIG.DATASET.LLM_REPLYS_PATH, 'r') as f:
+        llm_reply_dataset = json.load(f)
+    episode_ids = list(llm_reply_dataset.keys())
+    config.TASK_CONFIG.DATASET.EPISODES_ALLOWED = episode_ids
     config.freeze()
     # import pdb;pdb.set_trace()
     

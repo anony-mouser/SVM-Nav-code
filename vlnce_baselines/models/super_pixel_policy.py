@@ -121,7 +121,7 @@ class SuperPixelPolicy(nn.Module):
         return waypoints, values
     
     def forward(self, full_map: np.ndarray, traversible: np.ndarray, value_map: np.ndarray, collision_map: np.ndarray,
-                detected_classes: OrderedSet, position: Sequence, fmm_dist: np.ndarray, step: int, current_episode_id: int):
+                detected_classes: OrderedSet, position: Sequence, fmm_dist: np.ndarray, replan: bool, step: int, current_episode_id: int):
         if np.sum(value_map.astype(bool)) < 20 * 20:
             best_waypoint = np.array([int(position[0]), int(position[1])])
             best_value = 0.
@@ -136,7 +136,7 @@ class SuperPixelPolicy(nn.Module):
             sorted_waypoints, sorted_values = self._sorted_waypoints(sorted_regions)
             # print("sorted_waypoints and sorted values: ", sorted_waypoints, sorted_values)
             best_waypoint, best_value, sorted_waypoints = \
-                self.waypoint_selector(sorted_waypoints, position, collision_map, value_map, fmm_dist, traversible)
+                self.waypoint_selector(sorted_waypoints, position, collision_map, value_map, fmm_dist, traversible, replan)
                 
             if self.visualize:
                 self._visualize(sorted_regions, value_map, step, current_episode_id)
@@ -162,10 +162,10 @@ class SuperPixelPolicy(nn.Module):
         for waypoint in waypoints:
             cv2.circle(res, (waypoint[1], waypoint[0]), radius=2, color=(0,0,0), thickness=-1)
         
-        # cv2.imshow("super pixel", np.flipud(res))
-        # cv2.waitKey(1)
-        if self.visualize:
-            cv2.imwrite('img_debug/super_pixel.png', np.flipud(res))
+        cv2.imshow("super pixel", np.flipud(res))
+        cv2.waitKey(1)
+        # if self.visualize:
+            # cv2.imwrite('img_debug/super_pixel.png', np.flipud(res))
         
         if self.print_images:
             save_dir = os.path.join(self.config.RESULTS_DIR, "super_pixel/eps_%d"%current_episode_id)

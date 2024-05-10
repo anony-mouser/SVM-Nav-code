@@ -40,6 +40,9 @@ class FusionMapPolicy(nn.Module):
         self.max_destination_socre = -1e5
         self.fixed_destination = None
         self.fmm_dist = np.zeros((self.map_shape, self.map_shape))
+        self.decision_threshold = config.EVAL.DECISION_THRESHOLD
+        self.score_threshold = config.EVAL.SCORE_THRESHOLD
+        self.value_threshold = config.EVAL.VALUE_THRESHOLD
         
     def reset(self) -> None:
         # self.frontier_policy.reset()
@@ -127,7 +130,7 @@ class FusionMapPolicy(nn.Module):
         # traversible = get_traversible_area(map, classes)
         # traversible = get_floor_area(map, classes)
         traversible[collision_map == 1] = 0
-        planner = FMMPlanner(traversible, visualize=self.visualize)
+        planner = FMMPlanner(self.config, traversible, visualize=self.visualize)
         if traversible[waypoint[0], waypoint[1]] == 0:
             goal = get_nearest_nonzero_waypoint(traversible, waypoint)
         else:
@@ -155,8 +158,8 @@ class FusionMapPolicy(nn.Module):
             normalized_data = cv2.circle(normalized_data, (int(x), int(y)), radius=5, color=(255,0,0), thickness=1)
             normalized_data = cv2.circle(normalized_data, (waypoint[1], waypoint[0]), 
                                          radius=5, color=(0,0,255), thickness=1)
-            # cv2.imshow("fmm distance field", np.flipud(normalized_data))
-            cv2.imwrite('img_debug/dist_field.png', np.flipud(normalized_data))
+            cv2.imshow("fmm distance field", np.flipud(normalized_data))
+            # cv2.imwrite('img_debug/dist_field.png', np.flipud(normalized_data))
             
             cv2.waitKey(1)
         if self.print_images:
@@ -234,9 +237,11 @@ class FusionMapPolicy(nn.Module):
                 print("destination value: ", destination_value)
                 print("destination waypoint: ", destination_waypoint)
                 
-                if current_value >= 0.4:
+                if current_value >= self.decision_threshold:
                     candidates.append((destination_waypoint, score))
-                elif score >= 0.5 and destination_value >= 0.25 and destination_waypoint is not None:
+                elif (score >= self.score_threshold and 
+                      destination_value >= self.value_threshold and 
+                      destination_waypoint is not None):
                     print("!!! APPEND !!!")
                     candidates.append((destination_waypoint, score))
                 else:
@@ -267,16 +272,17 @@ class FusionMapPolicy(nn.Module):
                 one_step_full_map: np.ndarray, 
                 current_detection: sv.Detections, 
                 current_episode_id: int,
+                replan: bool,
                 step: int):
         
         x, y, heading = full_pose
         x, y = x * (100 / self.resolution), y * (100 / self.resolution)
         position = np.array([y, x])
         best_waypoint, best_value, sorted_waypoints = self.superpixel_policy(full_map, traversible, value_map, collision_map,
-                                                                             detected_classes, position, self.fmm_dist,
+                                                                             detected_classes, position, self.fmm_dist, replan,
                                                                              step, current_episode_id)
-        # print("current_position's value: ", value_map[int(y), int(x)])
-        # print("current pose: ", full_pose)
+        print("current_position's value: ", value_map[int(y), int(x)])
+        print("current pose: ", full_pose)
         current_value = value_map[int(y), int(x)]
         max_value = np.max(value_map)
         if search_destination:
@@ -307,6 +313,8 @@ class FusionMapPolicy(nn.Module):
                                       search_destination)
         
         if self.visualize:
+            if self.fixed_destination is not None:
+                best_waypoint = self.fixed_destination
             self._visualization(value_map, sorted_waypoints, best_waypoint, step, current_episode_id)
         
         return {"action": action}
@@ -334,8 +342,8 @@ class FusionMapPolicy(nn.Module):
         map_vis = cv2.circle(map_vis, (best_waypoint[1], best_waypoint[0]), radius=5, color=(0,255,0), thickness=1)
         map_vis = np.flipud(map_vis)
         self.vis_image[:, :] = map_vis
-        # cv2.imshow("waypoints", self.vis_image)
-        # cv2.waitKey(1)
+        cv2.imshow("waypoints", self.vis_image)
+        cv2.waitKey(1)
         
         if self.print_images:
             save_dir = os.path.join(self.config.RESULTS_DIR, "waypoints/eps_%d"%current_episode_id)

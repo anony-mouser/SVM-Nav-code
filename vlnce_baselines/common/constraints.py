@@ -95,7 +95,7 @@ class ConstraintsMonitor(nn.Module):
                 current_pose: Sequence, last_pose: Sequence):
         res  = []
         for item in constraints:
-            constraint_type, constraint_object = item
+            constraint_type, constraint_object = item[:2]
             constraint_type = constraint_type.lower().strip()
             # import pdb;pdb.set_trace()
             if constraint_type == "location constraint":

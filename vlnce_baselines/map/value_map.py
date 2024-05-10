@@ -35,6 +35,7 @@ class ValueMap(nn.Module):
         # channel 0 is confidence map;
         # channel 1 is blip value map;
         self.value_map = np.zeros((2, *self.shape))
+        self.accumulated_mask = np.zeros(self.shape)
         self.resolution = config.MAP.MAP_RESOLUTION
         self.hfov = config.TASK_CONFIG.SIMULATOR.DEPTH_SENSOR.HFOV
         self.radius = config.TASK_CONFIG.SIMULATOR.DEPTH_SENSOR.MAX_DEPTH
@@ -133,6 +134,33 @@ class ValueMap(nn.Module):
         # update_value = new_value * self.current_floor
         # update_mask = prev_value < update_value
         # self.value_map[1, update_mask] = update_value[update_mask]
+        
+        
+    # def _update_value_map(self, 
+    #                       prev_value: np.ndarray, 
+    #                       curr_value: np.ndarray, 
+    #                       prev_confidence: np.ndarray, 
+    #                       curr_confidence: np.ndarray,
+    #                       mask: np.ndarray) -> np.ndarray:
+    #     overlapped_area = np.logical_and(mask, self.accumulated_mask)
+    #     curr_confidence_mask = mask.copy()
+    #     prev_confidence_mask = self.accumulated_mask.copy()
+    #     curr_confidence_mask[overlapped_area == 1] = curr_confidence[overlapped_area == 1]
+    #     prev_confidence_mask[overlapped_area == 1] = prev_confidence[overlapped_area == 1]
+        
+    #     new_value = curr_confidence_mask * curr_value * self.current_floor + prev_confidence_mask * prev_value
+    #     new_confidence = (self.current_floor * curr_confidence)**2 + prev_confidence**2
+        
+    #     value_partion = curr_confidence_mask * self.current_floor + prev_confidence_mask
+    #     value_partion[value_partion == 0] = np.inf
+    #     confidence_partion = curr_confidence * self.current_floor + prev_confidence
+    #     confidence_partion[confidence_partion == 0] = np.inf
+        
+    #     new_value /= value_partion
+    #     new_confidence /= confidence_partion
+    #     self.value_map[0] = new_confidence * self.current_floor
+    #     self.value_map[1] = new_value * self.current_floor
+    #     self.accumulated_mask = np.logical_or(self.accumulated_mask, mask)
     
     def reset(self) -> None:
         self.value_map = np.zeros((2, *self.shape))
@@ -204,10 +232,10 @@ class ValueMap(nn.Module):
         self.vis_image = add_text(self.vis_image, "Confidence Mask", (520, 50))
         self.vis_image = add_text(self.vis_image, "Value Map", (1020, 50))
         
-        # cv2.imshow("info", self.vis_image)
-        # cv2.waitKey(1)
-        if self.visualize:
-            cv2.imwrite('img_debug/value_map.png', self.vis_image)
+        cv2.imshow("info", self.vis_image)
+        cv2.waitKey(1)
+        # if self.visualize:
+            # cv2.imwrite('img_debug/value_map.png', self.vis_image)
         
         if self.print_images:
             save_dir = os.path.join(self.config.RESULTS_DIR, "floor_confidence_value/eps_%d"%current_episode_id)

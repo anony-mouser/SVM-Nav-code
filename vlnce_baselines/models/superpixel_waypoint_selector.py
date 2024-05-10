@@ -15,6 +15,7 @@ class WaypointSelector(nn.Module):
         self._last_value = float("-inf")
         self._last_waypoint = np.zeros(2)
         self._stick_current_waypoint = False
+        self.change_threshold = self.config.EVAL.CHANGE_THRESHOLD
         
     def reset(self) -> None:
         self._last_value = float("-inf")
@@ -34,12 +35,15 @@ class WaypointSelector(nn.Module):
         
         return value
         
-    def forward(self, sorted_waypoints: np.ndarray, position: np.ndarray, 
-                collision_map: np.ndarray, value_map: np.ndarray, fmm_dist: np.ndarray, traversible: np.ndarray):
+    def forward(self, sorted_waypoints: np.ndarray, position: np.ndarray, collision_map: np.ndarray, 
+                value_map: np.ndarray, fmm_dist: np.ndarray, traversible: np.ndarray, replan: bool):
         best_waypoint, best_value = None, None
         invalid_waypoint = False
         # print("last waypoint: ", self._last_waypoint, self._last_value)
         if not np.array_equal(self._last_waypoint, np.zeros(2)):
+            if replan:
+                invalid_waypoint = True
+
             if np.sum(collision_map) > 0:
                 """ 
                 check if the last_waypoint is too close to the current collision area
@@ -55,9 +59,9 @@ class WaypointSelector(nn.Module):
                 print("################################################ achieve")
             
             x, y = int(position[0]), int(position[1])
-            # if fmm_dist is not None:
-            #     print("fmm dist: ", fmm_dist[x, y], np.max(fmm_dist))
-            if fmm_dist is not None and np.mean(fmm_dist[x-10:x+11, y-10:y+11]) >= np.max(fmm_dist):
+            if fmm_dist is not None:
+                print("fmm dist: ", np.mean(fmm_dist[x-10:x+11, y-10:y+11]), np.max(fmm_dist))
+            if fmm_dist is not None and abs(np.mean(fmm_dist[x-10:x+11, y-10:y+11]) - np.max(fmm_dist)) <= 1.0:
                 invalid_waypoint = True
                 print("################################################ created an enclosed area!")
         
@@ -80,10 +84,8 @@ class WaypointSelector(nn.Module):
             #     best_value = curr_value
                 
             if ((np.linalg.norm(self._last_waypoint - position) > self.distance_threshold) and 
-                (curr_value - self._last_value > -0.03)):
+                (curr_value - self._last_value > self.change_threshold)):
                 best_waypoint = self._last_waypoint
-            else:
-                print("!!!!!!!! already achieve last waypoint")
         
         if best_waypoint is None:
             for waypoint in sorted_waypoints:

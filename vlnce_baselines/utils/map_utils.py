@@ -468,6 +468,15 @@ def collision_check(last_pose: np.ndarray, current_pose: np.ndarray,
     
 #     return collision_map
 
+def calculate_displacement(last_pose: np.ndarray, current_pose: np.ndarray, resolution: float):
+    last_position, last_heading = get_agent_position(last_pose, resolution)
+    current_position, current_heading = get_agent_position(current_pose, resolution)
+    x, y = current_position
+    position_vector = current_position - last_position
+    displacement = np.linalg.norm(position_vector)
+    
+    return displacement
+
 def collision_check_fmm(last_pose: np.ndarray, current_pose: np.ndarray,
                     resolution: float, map_shape: Sequence,
                     collision_threshold: float=0.2,
@@ -488,7 +497,8 @@ def collision_check_fmm(last_pose: np.ndarray, current_pose: np.ndarray,
         heading_vector = angle_to_vector(current_heading)
         collision_mask = get_collision_mask(heading_vector, mask, 32)
         x, y = int(x), int(y)
-        collision_map[x - 5 : x + 6, y - 5: y + 6] = collision_mask
+        if x - 5 >= 0 and x + 6 < map_shape[0] and y - 5 >= 0 and y + 6 < map_shape[1]:
+            collision_map[x - 5 : x + 6, y - 5 : y + 6] = collision_mask
         # cv2.imshow("mask: ", (np.flipud(mask * 255)).astype(np.uint8))
         # cv2.imshow("collision mask: ", (np.flipud(collision_mask * 255)).astype(np.uint8))
     

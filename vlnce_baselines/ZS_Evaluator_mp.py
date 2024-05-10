@@ -1,5 +1,6 @@
 import os
-import pdb;
+import pdb
+import queue
 import copy
 import gzip
 import json
@@ -28,6 +29,7 @@ from vlnce_baselines.utils.map_utils import *
 from vlnce_baselines.map.value_map import ValueMap
 from vlnce_baselines.utils.data_utils import OrderedSet
 from vlnce_baselines.map.mapping import Semantic_Mapping
+from vlnce_baselines.map.skeleton_map import SkeletonMap
 from vlnce_baselines.models.Policy import FusionMapPolicy
 from vlnce_baselines.common.env_utils import construct_envs
 from vlnce_baselines.common.utils import gather_list_and_concat, get_device
@@ -66,8 +68,8 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         self.classes = []
         self.current_episode_id = None
         self.current_detections = None
-        self.max_constraint_steps = 25
-        self.min_constraint_steps = 10
+        # self.max_constraint_steps = 25
+        # self.min_constraint_steps = 10
         self.map_channels = map_channels
         self.floor = np.zeros(self.map_shape)
         self.frontiers = np.zeros(self.map_shape)
@@ -75,6 +77,8 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         self.collision_map = np.zeros(self.map_shape)
         self.visited = np.zeros(self.map_shape)
         self.base_classes = copy.deepcopy(base_classes) # 'chair', 'couch', 'plant', 'bed', 'toilet', 'tv', 'table', 'oven', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'cup', ...
+        self.min_constraint_steps = config.EVAL.MIN_CONSTRAINT_STEPS
+        self.max_constraint_steps = config.EVAL.MAX_CONSTRAINT_STEPS
         
     # for tensorboard
     # @property
@@ -156,6 +160,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         self.mapping_module.eval()
         
         self.value_map_module = ValueMap(self.config, self.mapping_module.map_shape, self.device)
+        self.skeleton_module = SkeletonMap(self.config)
         self.policy = FusionMapPolicy(self.config, self.mapping_module.map_shape[0])
         self.policy.reset()
         
@@ -317,6 +322,17 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             else:
                 return llm_destination
         
+        # def _get_first_destination(sub_constraints: dict, llm_destination: str) -> str:
+        #     for constraints in sub_constraints.values():
+        #         destinations = [item[1] for item in constraints if item[0] != "direction constraint"]
+        #         if len(destinations) == 0:
+        #             continue
+        #         else:
+        #             destination = ",".join(destinations)
+        #             return destination
+        #     else:
+        #         return llm_destination
+        
         self.llm_reply = obs['llm_reply']
         self.instruction = obs['instruction']['text']
         self.sub_instructions = self.llm_reply['sub-instructions']
@@ -330,7 +346,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         self.classes = self._process_classes(self.base_classes, self.destination_class)
         self.constraints_check = [False] * len(self.sub_constraints)
         
-    def _process_map(self, full_map: np.ndarray, kernel_size: int=3) -> tuple:
+    def _process_map(self, step: int, full_map: np.ndarray, kernel_size: int=3) -> tuple:
         navigable_index = process_navigable_classes(self.detected_classes)
         not_navigable_index = [i for i in range(len(self.detected_classes)) if i not in navigable_index]
         full_map = remove_small_objects(full_map.astype(bool), min_size=64)
@@ -361,6 +377,8 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         floor = remove_small_objects(floor, min_size=400).astype(bool)
         floor = binary_closing(floor, selem=selem)
         traversible = np.logical_or(floor, traversible)
+        
+        # skeleton, angle_info = self.skeleton_module(floor, self.current_episode_id, step)
         
         explored_area = binary_closing(explored_area, selem=selem)
         contours, _ = cv2.findContours(explored_area.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -417,7 +435,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                 self.mapping_module.update_map(step, self.detected_classes, self.current_episode_id)
             self.mapping_module.one_step_full_map.fill_(0.)
             self.mapping_module.one_step_local_map.fill_(0.)
-            self.traversible, self.floor, self.frontiers = self._process_map(full_map[0])
+            self.traversible, self.floor, self.frontiers = self._process_map(step, full_map[0])
                         
             blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), self.destination)
             blip_value = blip_value.detach().cpu().numpy()
@@ -429,7 +447,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                                     full_map[0], self.floor, self.traversible, 
                                     full_pose[0], self.frontiers, self.detected_classes,
                                     self.destination_class, self.classes, False, one_step_full_map[0], 
-                                    self.current_detections, self.current_episode_id, step)
+                                    self.current_detections, self.current_episode_id, False, step)
             
             
             # cv2.imshow("self.traversible", np.flipud(self.traversible.astype(np.uint8) * 255))
@@ -473,6 +491,8 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         print("\n ========== START TO NAVIGATE ==========\n")
         
         constraint_steps = 0
+        collided = 0
+        replan = False
         start_to_wait = False
         search_destination = False
         last_action, current_action = None, None
@@ -487,7 +507,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         all_constraint_types = [item[0] for item in current_constraint] #direction, location, object
         
         for step in range(12, self.max_step):
-            print("\nstep: ", step)
+            print(f"\nepisode:{self.current_episode_id}, step:{step}")
             print(f"instr: {self.instruction}")
             print(f"sub_instr_{current_idx}: {self.sub_instructions[current_idx]}")
             constraint_steps += 1
@@ -498,7 +518,11 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             if "direction constraint" in all_constraint_types and start_check_pose is None:
                 start_check_pose = full_pose[0] # fix last pose the first time try the direction constraint
             
-            if sum(self.constraints_check) >= len(self.sub_instructions) - 1:
+            # if sum(self.constraints_check) >= len(self.sub_instructions) - 1:
+            #     search_destination = True
+            #     print("start to search destination")
+            
+            if int(current_idx) >= len(self.sub_instructions) - 1:
                 search_destination = True
                 print("start to search destination")
                 
@@ -506,7 +530,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                 check = self.constraints_monitor(current_constraint, obs[0], 
                                                 self.current_detections, self.classes, 
                                                 current_pose, start_check_pose)
-                # print(current_constraint, check)
+                print(current_constraint, check)
                 
                 if len(check) == 0:
                     print("empty constraint")
@@ -516,7 +540,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                                           for i in range(len(current_constraint)) 
                                           if not check[i]]
                     all_constraint_types = [item[0] for item in current_constraint]
-                if (sum(check) == len(check) or constraint_steps >= self.max_constraint_steps):
+                if (sum(check) == len(check) or constraint_steps >= int(250 / len(self.sub_instructions))):
                     if not start_to_wait:
                         start_to_wait = True
                         self.constraints_check[current_idx] = True  
@@ -525,8 +549,9 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                         current_idx = self.constraints_check.index(False)
                         print(f"sub_instr_{current_idx}: {self.sub_instructions[current_idx]}")
                         landmarks = self.decisions[str(current_idx)]['landmarks']
-                        self.destination_class = [item[0] for item in landmarks]
-                        self.classes = self._process_classes(self.base_classes, self.destination_class)
+                        if len(landmarks) > 0:
+                            self.destination_class = [item[0] for item in landmarks]
+                            self.classes = self._process_classes(self.base_classes, self.destination_class)
                         current_constraint = self.sub_constraints[str(current_idx)]
                         all_constraint_types = [item[0] for item in current_constraint]
                         current_pose, start_check_pose = None, None
@@ -539,13 +564,54 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             print("current constraint: ", current_constraint)
             print("constraint_steps: ", constraint_steps)
             
+            # use first not direction constraint landmark as blip2 prompt
+            # if len(current_constraint) > 0 and current_constraint[0][0] != "direction constraint":
+            #     new_destination = current_constraint[0][1]
+            #     if current_idx >= len(self.sub_instructions) - 1:
+            #         self.destination = self.llm_reply['destination']
+            #     else:
+            #         self.destination = new_destination
+            
+            # process empty constraint and landmark
             if len(current_constraint) > 0 and current_constraint[0][0] != "direction constraint":
                 new_destination = current_constraint[0][1]
                 if current_idx >= len(self.sub_instructions) - 1:
                     self.destination = self.llm_reply['destination']
                 else:
                     self.destination = new_destination
-                    
+            if len(current_constraint) == 0 and current_idx >=len(self.sub_constraints) - 1:
+                self.destination = self.llm_reply['destination']
+                
+            # contact all constraints in one sub-instruction
+            # new_destinations = [item[1] for item in self.sub_constraints[str(current_idx)] 
+            #                     if item[0] != "direction constraint"]
+            # if len(new_destinations) > 0:
+            #     new_destination = " and ".join(new_destinations)
+            #     self.destination = new_destination
+            
+            # contact all constraints in one sub-instruction and use llm-destination
+            # new_destinations = [item[1] for item in self.sub_constraints[str(current_idx)] 
+            #                     if item[0] != "direction constraint"]
+            # if len(new_destinations) > 0:
+            #     new_destination = " and ".join(new_destinations)
+            #     if current_idx >= len(self.sub_instructions) - 1:
+            #         self.destination = self.llm_reply['destination']
+            #     else:
+            #         self.destination = new_destination
+            
+            # sliding window
+            # new_destinations = [item[1] for item in self.sub_constraints[str(current_idx)] 
+            #                     if item[0] != "direction constraint"]
+            # if current_idx > 0:
+            #     last_destinations = [item[1] for item in self.sub_constraints[str(current_idx - 1)]
+            #                     if item[0] != "direction constraint"]
+            #     new_destinations += last_destinations
+            #     new_destinations = [item for i, item in enumerate(new_destinations) if new_destinations.index(item) == i]
+            # if len(new_destinations) > 0:
+            #     new_destination = ",".join(new_destinations)
+            #     self.destination = new_destination
+            
+            # use sub-instruction as blip2 prompt
             # new_destination = self.sub_instructions[current_idx]
             # if current_idx >= len(self.sub_instructions) - 1:
             #     self.destination = self.llm_reply['destination']
@@ -554,6 +620,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             if self.destination != self.last_destination:   #如果上一步的destination到达了，则value map重新置0
                 self.value_map_module.value_map[...] = 0.
                 self.last_destination = self.destination
+                # self._look_around()
             
             print("destination: ", self.destination)
             print("destination classes: ", self.destination_class)
@@ -580,7 +647,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             self.mapping_module.one_step_full_map.fill_(0.)
             self.mapping_module.one_step_local_map.fill_(0.)
             
-            self.traversible, self.floor, self.frontiers = self._process_map(full_map[0])
+            self.traversible, self.floor, self.frontiers = self._process_map(step, full_map[0])
             # cv2.imshow("collision_map", (np.flipud(self.collision_map * 255)).astype(np.uint8))
             # cv2.waitKey(1)
             # cv2.imshow("self.traversible", np.flipud(self.traversible.astype(np.uint8) * 255))
@@ -589,6 +656,20 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             
             last_pose = current_pose
             current_pose = full_pose[0]
+            if last_pose is not None and current_pose is not None:
+                displacement = calculate_displacement(last_pose, current_pose, self.resolution)
+                if displacement < 0.2 * 100 / self.resolution:
+                    collided += 1
+                else:
+                    collided = 0
+                if collided >= 30:
+                    replan = True
+                    print(f"{self.current_episode_id}: {collided}\n")
+                    fname = os.path.join(self.config.EVAL_CKPT_PATH_DIR, 
+                                        f"r{self.local_rank}_w{self.world_size}_collision_stuck.txt")
+                    with open(fname, "a") as f:
+                        f.writelines(f"id: {str(self.current_episode_id)}; step: {str(step)}; collided: {str(collided)}\n")
+                
             last_action = current_action
             current_action = self._action
             if last_pose is not None and current_action["action"] == 1:
@@ -608,7 +689,163 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                                     full_pose[0], self.frontiers, self.detected_classes,
                                     self.destination_class, self.classes, search_destination, 
                                     one_step_full_map[0], self.current_detections, 
-                                    self.current_episode_id, step)
+                                    self.current_episode_id, replan, step)
+    
+    # check every constraint in sub-instruction subsequently
+    # def rollout(self):
+    #     """
+    #     execute a whole episode which consists of a sequence of sub-steps
+    #     """
+    #     self._maps_initialization()
+    #     full_pose, obs, dones, infos = self._look_around()
+    #     print("\n ========== START TO NAVIGATE ==========\n")
+        
+    #     constraint_steps = 0
+    #     start_to_wait = False
+    #     search_destination = False
+    #     last_action, current_action = None, None
+    #     last_pose, start_check_pose = None, None
+    #     current_pose = full_pose[0]
+    #     self._action2 = None
+    #     current_idx = self.constraints_check.index(False)
+    #     landmarks = self.decisions[str(current_idx)]['landmarks']   #第一个子指令中的landmark
+    #     self.destination_class = [item[0] for item in landmarks]
+    #     self.classes = self._process_classes(self.base_classes, self.destination_class) #将第一个子指令中的landmark加入classes
+    #     current_constraints = self.sub_constraints[str(current_idx)]
+    #     all_constraint_types = [item[0] for item in current_constraints] #direction, location, object
+        
+    #     for step in range(12, self.max_step):
+    #         print(f"\nepisode:{self.current_episode_id}, step:{step}")
+    #         print(f"instr: {self.instruction}")
+    #         print(f"sub_instr_{current_idx}: {self.sub_instructions[current_idx]}")
+    #         constraint_steps += 1
+    #         position = full_pose[0][:2] * 100 / self.resolution
+    #         y, x = int(position[0]), int(position[1])
+    #         self.visited[x, y] = 1
+            
+    #         if "direction constraint" in all_constraint_types and start_check_pose is None:
+    #             start_check_pose = full_pose[0] # fix last pose the first time try the direction constraint
+            
+    #         if sum(self.constraints_check) >= len(self.sub_instructions) - 1:
+    #             search_destination = True
+    #             print("start to search destination")
+                
+    #         if sum(self.constraints_check) < len(self.sub_instructions):
+    #             if len(current_constraints) > 0:
+    #                 current_constraint = [current_constraints[0]]
+    #                 print("current constraint: ", current_constraint)
+    #                 check = self.constraints_monitor(current_constraint, obs[0], 
+    #                                                 self.current_detections, self.classes, 
+    #                                                 current_pose, start_check_pose)
+    #                 print(current_constraint, check)
+    #                 if (sum(check) == len(check) or constraint_steps >= self.max_constraint_steps):
+    #                     if not start_to_wait:
+    #                         start_to_wait = True
+    #                         # self.constraints_check[current_idx] = True
+    #                 if start_to_wait and (constraint_steps >= self.min_constraint_steps):
+    #                     del current_constraints[0]
+    #                     constraint_steps = 0
+    #                     start_to_wait = False
+    #                     if len(current_constraints) >= 0:
+    #                         self.constraints_check[current_idx] = True
+    #                         if False in self.constraints_check:
+    #                             current_idx = self.constraints_check.index(False)
+    #                             print(f"sub_instr_{current_idx}: {self.sub_instructions[current_idx]}")
+    #                             landmarks = self.decisions[str(current_idx)]['landmarks']
+    #                             self.destination_class = [item[0] for item in landmarks]
+    #                             self.classes = self._process_classes(self.base_classes, self.destination_class)
+    #                             current_constraints = self.sub_constraints[str(current_idx)]
+    #                             all_constraint_types = [item[0] for item in current_constraints]
+    #                             current_pose, start_check_pose = None, None
+    #                         else:
+    #                             current_constraints, all_constraint_types = [], []
+    #                             print("all constraints are done")
+    #             elif current_idx < len(self.sub_instructions):
+    #                 self.constraints_check[current_idx] = True
+    #                 if False in self.constraints_check:
+    #                     current_idx = self.constraints_check.index(False)
+    #                     print(f"sub_instr_{current_idx}: {self.sub_instructions[current_idx]}")
+    #                     landmarks = self.decisions[str(current_idx)]['landmarks']
+    #                     self.destination_class = [item[0] for item in landmarks]
+    #                     self.classes = self._process_classes(self.base_classes, self.destination_class)
+    #                     current_constraints = self.sub_constraints[str(current_idx)]
+    #                     current_constraint = current_constraints[0]
+    #                     all_constraint_types = [item[0] for item in current_constraints]
+    #                     current_pose, start_check_pose = None, None
+    #                 else:
+    #                     current_constraints, all_constraint_types = [], []
+    #                     current_constraint = []
+    #                     print("all constraints are done")
+                    
+    #         print("current constraint: ", current_constraints)
+    #         print("constraint_steps: ", constraint_steps)
+            
+    #         # use first not direction constraint landmark as blip2 prompt
+    #         if len(current_constraint) > 0 and current_constraint[0][0] != "direction constraint":
+    #             new_destination = current_constraint[0][1]
+    #             if current_idx >= len(self.sub_instructions) - 1:
+    #                 self.destination = self.llm_reply['destination']
+    #             else:
+    #                 self.destination = new_destination
+                
+    #         if self.destination != self.last_destination:   #如果上一步的destination到达了，则value map重新置0
+    #             self.value_map_module.value_map[...] = 0.
+    #             self.last_destination = self.destination
+            
+    #         print("destination: ", self.destination)
+    #         print("destination classes: ", self.destination_class)
+            
+    #         actions = []
+    #         for _ in range(self.config.NUM_ENVIRONMENTS):
+    #             if self.keyboard_control:
+    #                 self._action2 =self._use_keyboard_control() 
+    #                 actions.append(self._action2)
+    #             else:
+    #                 actions.append(self._action)
+    #         outputs = self.envs.step(actions)
+    #         obs, _, dones, infos = [list(x) for x in zip(*outputs)]
+            
+    #         if dones[0]:
+    #             self._calculate_metric(infos)
+    #             break
+    #         # 为下一次rollout准备
+    #         batch_obs = self._batch_obs(obs)
+    #         poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
+    #         self.mapping_module(batch_obs, poses)
+    #         full_map, full_pose, one_step_full_map = \
+    #             self.mapping_module.update_map(step, self.detected_classes, self.current_episode_id)
+    #         self.mapping_module.one_step_full_map.fill_(0.)
+    #         self.mapping_module.one_step_local_map.fill_(0.)
+            
+    #         self.traversible, self.floor, self.frontiers = self._process_map(full_map[0])
+    #         # cv2.imshow("collision_map", (np.flipud(self.collision_map * 255)).astype(np.uint8))
+    #         # cv2.waitKey(1)
+    #         # cv2.imshow("self.traversible", np.flipud(self.traversible.astype(np.uint8) * 255))
+    #         # cv2.imshow("self.floor", np.flipud(self.floor.astype(np.uint8) * 255))
+    #         # cv2.imshow("self.frontiers", np.flipud(self.frontiers.astype(np.uint8) * 255))
+            
+    #         last_pose = current_pose
+    #         current_pose = full_pose[0]
+    #         last_action = current_action
+    #         current_action = self._action
+    #         if last_pose is not None and current_action["action"] == 1:
+    #             collision_map = collision_check_fmm(last_pose, current_pose, self.resolution, 
+    #                                             self.mapping_module.map_shape)
+    #             self.collision_map = np.logical_or(self.collision_map, collision_map)
+    #             # self.collision_map[self.visited == 1] = 0
+            
+    #         blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), self.destination)
+    #         blip_value = blip_value.detach().cpu().numpy()
+    #         value_map = self.value_map_module(step, full_map[0], self.floor, self.collision_map, 
+    #                               blip_value, full_pose[0], self.detected_classes, self.current_episode_id)
+    #         # torch.save(self.value_map_module.value_map[1], 
+    #         #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
+    #         self._action = self.policy(self.value_map_module.value_map[1], self.collision_map,
+    #                                 full_map[0], self.floor, self.traversible, 
+    #                                 full_pose[0], self.frontiers, self.detected_classes,
+    #                                 self.destination_class, self.classes, search_destination, 
+    #                                 one_step_full_map[0], self.current_detections, 
+    #                                 self.current_episode_id, step)
     
     def eval(self):
         self._set_eval_config()
@@ -674,4 +911,5 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
 
         #         logger.info(f"Episodes evaluated: {total}")
         t2 = time.time()
+        logger.info(f"time: {t2 - t1}s")
         print("test time: ", t2 - t1)

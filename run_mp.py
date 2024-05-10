@@ -45,6 +45,8 @@ def run_exp(exp_name: str, exp_config: str,
     os.makedirs(config.EVAL_CKPT_PATH_DIR, exist_ok=True)
     os.system("mkdir -p data/logs/running_log")
     logger.add_filehandler('data/logs/running_log/' + config.LOG_FILE)
+    logger.info(f"hyper parameters:\n{config.EVAL}")
+    logger.info(f"llm reply file: {config.TASK_CONFIG.DATASET.LLM_REPLYS_PATH}")
     
     # dataset split, start multi-processes
     num_devices = torch.cuda.device_count()

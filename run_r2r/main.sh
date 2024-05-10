@@ -1,8 +1,9 @@
-flag=" --exp_name exp_100trajs
+flag=" --exp_name exp_476_2
       --run-type eval
       --exp-config vlnce_baselines/config/exp1.yaml
       NUM_ENVIRONMENTS 1
-      KEYBOARD_CONTROL 1
+      KEYBOARD_CONTROL 0
+      TRAINER_NAME ZS-Evaluator-mp-multi_value_map
       "
 
 CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 --master_port 12346 run.py $flag

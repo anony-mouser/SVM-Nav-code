@@ -66,4 +66,4 @@ DATASET:
   SPLIT: val_unseen
   DATA_PATH: data/datasets/R2R_VLNCE_v1-3_preprocessed/{split}/{split}.json.gz
   SCENES_DIR: data/scene_datasets/
-  LLM_REPLYS_PATH: data/datasets/LLM_REPLYS/llm_reply_valunseen100.json
+  LLM_REPLYS_PATH: data/datasets/LLM_REPLYS/llm_reply_valunseen1.json
