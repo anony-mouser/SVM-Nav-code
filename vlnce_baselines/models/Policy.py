@@ -289,11 +289,11 @@ class FusionMapPolicy(nn.Module):
             destination_waypoint, score = self._search_destination(destination, classes, current_value, max_value,
                                                                    detected_classes, one_step_full_map, 
                                                                    value_map, floor, traversible, current_detection, step)
-            if destination_waypoint is not None and score > self.max_destination_socre:
+            if destination_waypoint is not None and score >= self.max_destination_socre:
                 print("!!!!!!!find destination: ", destination_waypoint)
                 self.fixed_destination = destination_waypoint
                 
-            if score > self.max_destination_socre:
+            if score >= self.max_destination_socre + 0.03:
                 self.max_destination_socre = score
                 
             if self.fixed_destination is not None:

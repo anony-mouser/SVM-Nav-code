@@ -61,15 +61,17 @@ class WaypointSelector(nn.Module):
             x, y = int(position[0]), int(position[1])
             if fmm_dist is not None:
                 print("fmm dist: ", np.mean(fmm_dist[x-10:x+11, y-10:y+11]), np.max(fmm_dist))
-            if fmm_dist is not None and abs(np.mean(fmm_dist[x-10:x+11, y-10:y+11]) - np.max(fmm_dist)) <= 1.0:
+            if fmm_dist is not None and abs(np.mean(fmm_dist[x-10:x+11, y-10:y+11]) - np.max(fmm_dist)) <= 5.0:
                 invalid_waypoint = True
                 print("################################################ created an enclosed area!")
         
             if invalid_waypoint:
                 idx = 0
                 new_waypoint = sorted_waypoints[idx]
-                while (np.linalg.norm(new_waypoint - position) < self.distance_threshold and 
-                       idx + 1 < len(sorted_waypoints)):
+                distance_flag = np.linalg.norm(new_waypoint - position) < self.distance_threshold
+                last_waypoint_flag = np.linalg.norm(new_waypoint - self._last_waypoint) < self.distance_threshold
+                flag = distance_flag or last_waypoint_flag
+                while ( flag and idx + 1 < len(sorted_waypoints)):
                     idx += 1
                     new_waypoint = sorted_waypoints[idx]
                 self._last_waypoint = new_waypoint

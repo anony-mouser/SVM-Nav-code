@@ -79,7 +79,8 @@ class SuperPixelPolicy(nn.Module):
         img = cv2.applyColorMap((normalized_values * 255).astype(np.uint8), cv2.COLORMAP_HOT)
         slic = Slic(num_components=24**2, compactness=100)
         assignment = slic.iterate(img)
-        valid_labels = np.unique(assignment * valid_mask)[1:]
+        assignment *= valid_mask
+        valid_labels = np.unique(assignment)[1:]
         value_regions = []
         # t1 = time.time()
         for label in valid_labels:
@@ -122,7 +123,7 @@ class SuperPixelPolicy(nn.Module):
     
     def forward(self, full_map: np.ndarray, traversible: np.ndarray, value_map: np.ndarray, collision_map: np.ndarray,
                 detected_classes: OrderedSet, position: Sequence, fmm_dist: np.ndarray, replan: bool, step: int, current_episode_id: int):
-        if np.sum(value_map.astype(bool)) < 20 * 20:
+        if np.sum(value_map.astype(bool)) < 24**2:
             best_waypoint = np.array([int(position[0]), int(position[1])])
             best_value = 0.
             sorted_waypoints = [np.array([int(position[0]), int(position[1])])]

@@ -118,6 +118,7 @@ class ValueMap(nn.Module):
                           curr_value: np.ndarray, 
                           prev_confidence: np.ndarray, 
                           curr_confidence: np.ndarray,
+                          one_step_floor: np.ndarray,
                           mask: np.ndarray) -> np.ndarray:
         # import pdb;pdb.set_trace()
         new_map_mask = np.logical_and(curr_confidence < 0.35, curr_confidence < prev_confidence)
@@ -129,8 +130,11 @@ class ValueMap(nn.Module):
         new_value /= partion
         new_confidence /= partion
         # new_value[new_map_mask] = 0.0
-        self.value_map[0] = new_confidence * self.current_floor
-        self.value_map[1] = new_value * self.current_floor
+        # self.value_map[0] = new_confidence * self.current_floor
+        # self.value_map[1] = new_value * self.current_floor
+        self.value_map[0][one_step_floor == 1] = new_confidence[one_step_floor == 1]
+        self.value_map[1][one_step_floor == 1] = new_value[one_step_floor == 1]
+        self.value_map *= self.current_floor
         # update_value = new_value * self.current_floor
         # update_mask = prev_value < update_value
         # self.value_map[1, update_mask] = update_value[update_mask]
@@ -178,6 +182,7 @@ class ValueMap(nn.Module):
                 step: int,
                 full_map: np.ndarray, 
                 floor: np.ndarray,
+                one_step_floor: np.ndarray,
                 collision_map: np.ndarray,
                 blip_value: np.ndarray,
                 full_pose: Sequence,
@@ -205,7 +210,7 @@ class ValueMap(nn.Module):
         previous_confidence = self.value_map[0]
         current_value = blip_value
         previous_value = self.value_map[1]
-        self._update_value_map(previous_value, current_value, previous_confidence, current_confidence, mask)
+        self._update_value_map(previous_value, current_value, previous_confidence, current_confidence, one_step_floor, mask)
         if self.visualize:
             self._visualize(step, current_episode_id)
         

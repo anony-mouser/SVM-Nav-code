@@ -51,6 +51,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         torch.cuda.set_device(self.device)
         self.config = config
         self.map_args = config.MAP
+        self.visualize = config.MAP.VISUALIZE
         self.resolution = config.MAP.MAP_RESOLUTION
         self.keyboard_control = config.KEYBOARD_CONTROL
         self.width = config.TASK_CONFIG.SIMULATOR.RGB_SENSOR.WIDTH
@@ -72,6 +73,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         # self.min_constraint_steps = 10
         self.map_channels = map_channels
         self.floor = np.zeros(self.map_shape)
+        self.one_step_floor = np.zeros(self.map_shape)
         self.frontiers = np.zeros(self.map_shape)
         self.traversible = np.zeros(self.map_shape)
         self.collision_map = np.zeros(self.map_shape)
@@ -345,6 +347,27 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         self.destination_class = [item[0] for item in first_landmarks]
         self.classes = self._process_classes(self.base_classes, self.destination_class)
         self.constraints_check = [False] * len(self.sub_constraints)
+    
+    
+    def _process_one_step_floor(self, one_step_full_map: np.ndarray, kernel_size: int=3) -> np.ndarray:
+        navigable_index = process_navigable_classes(self.detected_classes)
+        not_navigable_index = [i for i in range(len(self.detected_classes)) if i not in navigable_index]
+        one_step_full_map = remove_small_objects(one_step_full_map.astype(bool), min_size=64)
+        
+        obstacles = one_step_full_map[0, ...].astype(bool)
+        explored_area = one_step_full_map[1, ...].astype(bool)
+        objects = np.sum(one_step_full_map[map_channels:, ...][not_navigable_index], axis=0).astype(bool)
+        navigable = np.logical_or.reduce(one_step_full_map[map_channels:, ...][navigable_index])
+        navigable = np.logical_and(navigable, np.logical_not(objects))
+        
+        free_mask = 1 - np.logical_or(obstacles, objects)
+        free_mask = np.logical_or(free_mask, navigable)
+        floor = explored_area * free_mask
+        # floor = explored_area * traversible
+        floor = remove_small_objects(floor, min_size=400).astype(bool)
+        floor = binary_closing(floor, selem=disk(kernel_size))
+        
+        return floor
         
     def _process_map(self, step: int, full_map: np.ndarray, kernel_size: int=3) -> tuple:
         navigable_index = process_navigable_classes(self.detected_classes)
@@ -415,19 +438,22 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         self.mapping_module.one_step_full_map.fill_(0.)
         self.mapping_module.one_step_local_map.fill_(0.)
         
-        blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), self.destination) #大小1x1
-        blip_value = blip_value.detach().cpu().numpy()
-        self.value_map_module(0, full_map[0], self.floor, self.collision_map, 
-                              blip_value, full_pose[0], self.detected_classes, self.current_episode_id)
+        # blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), self.destination) #大小1x1
+        # blip_value = blip_value.detach().cpu().numpy()
+        # self.value_map_module(0, full_map[0], self.floor, self.collision_map, 
+        #                       blip_value, full_pose[0], self.detected_classes, self.current_episode_id)
     
     def _look_around(self):
         print("\n========== LOOK AROUND ==========\n")
+        full_pose, obs, dones, infos = None, None, None, None
         for step in range(0, 12):
             actions = []
             for _ in range(self.config.NUM_ENVIRONMENTS):
                 actions.append({"action": HabitatSimActions.TURN_LEFT})
             outputs = self.envs.step(actions)
             obs, _, dones, infos = [list(x) for x in zip(*outputs)]
+            if dones[0]:
+                return full_pose, obs, dones, infos
             batch_obs = self._batch_obs(obs)
             poses = torch.from_numpy(np.array([item['sensor_pose'] for item in obs])).float().to(self.device)
             self.mapping_module(batch_obs, poses)
@@ -436,10 +462,12 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             self.mapping_module.one_step_full_map.fill_(0.)
             self.mapping_module.one_step_local_map.fill_(0.)
             self.traversible, self.floor, self.frontiers = self._process_map(step, full_map[0])
+            self.one_step_floor = self._process_one_step_floor(one_step_full_map[0])
                         
             blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), self.destination)
             blip_value = blip_value.detach().cpu().numpy()
-            value_map = self.value_map_module(step, full_map[0], self.floor, self.collision_map, blip_value, full_pose[0], 
+            value_map = self.value_map_module(step, full_map[0], self.floor, self.one_step_floor, 
+                                              self.collision_map, blip_value, full_pose[0], 
                                   self.detected_classes, self.current_episode_id)
             # torch.save(self.value_map_module.value_map[1], 
             #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
@@ -472,6 +500,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         self.current_detections = None
         self.detected_classes = OrderedSet()
         self.floor = np.zeros(self.map_shape)
+        self.one_step_floor = np.zeros(self.map_shape)
         self.frontiers = np.zeros(self.map_shape)
         self.traversible = np.zeros(self.map_shape)
         self.collision_map = np.zeros(self.map_shape)
@@ -492,6 +521,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         
         constraint_steps = 0
         collided = 0
+        empty_value_map = 0
         replan = False
         start_to_wait = False
         search_destination = False
@@ -621,7 +651,20 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                 self.value_map_module.value_map[...] = 0.
                 self.last_destination = self.destination
                 # self._look_around()
-            
+                
+            if np.sum(self.value_map_module.value_map[1].astype(bool)) <= 24**2:
+                empty_value_map += 1
+                constraint_steps = 0
+            else:
+                empty_value_map = 0 
+            if empty_value_map >= 5:
+                full_pose, obs, dones, infos = self._look_around()
+                if dones[0]:
+                    self._calculate_metric(infos)
+                    break
+                empty_value_map = 0
+                constraint_steps = 0
+            print("value map area: ", np.sum(self.value_map_module.value_map[1].astype(bool)))
             print("destination: ", self.destination)
             print("destination classes: ", self.destination_class)
             
@@ -648,6 +691,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             self.mapping_module.one_step_local_map.fill_(0.)
             
             self.traversible, self.floor, self.frontiers = self._process_map(step, full_map[0])
+            self.one_step_floor = self._process_one_step_floor(one_step_full_map[0])
             # cv2.imshow("collision_map", (np.flipud(self.collision_map * 255)).astype(np.uint8))
             # cv2.waitKey(1)
             # cv2.imshow("self.traversible", np.flipud(self.traversible.astype(np.uint8) * 255))
@@ -662,6 +706,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                     collided += 1
                 else:
                     collided = 0
+                    replan = False
                 if collided >= 30:
                     replan = True
                     print(f"{self.current_episode_id}: {collided}\n")
@@ -680,8 +725,9 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             
             blip_value = self.value_map_module.get_blip_value(Image.fromarray(obs[0]['rgb']), self.destination)
             blip_value = blip_value.detach().cpu().numpy()
-            value_map = self.value_map_module(step, full_map[0], self.floor, self.collision_map, 
+            value_map = self.value_map_module(step, full_map[0], self.floor, self.one_step_floor, self.collision_map, 
                                   blip_value, full_pose[0], self.detected_classes, self.current_episode_id)
+            print("value map area here: ", np.sum(self.value_map_module.value_map[1].astype(bool)))
             # torch.save(self.value_map_module.value_map[1], 
             #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
             self._action = self.policy(self.value_map_module.value_map[1], self.collision_map,
