@@ -303,7 +303,13 @@ def angle_between_vectors(vector1: np.ndarray, vector2: np.ndarray) -> np.ndarra
     vector2_length = np.linalg.norm(vector2)
     angle = np.arccos(dot_product / (vector1_length * vector2_length))
     
-    return np.degrees(angle)
+    cross_product = np.cross(vector1, vector2)
+    if cross_product == 0 and vector1[0] == vector2[0] * -1:
+        return 180.
+    signed_angle = np.sign(cross_product) * angle
+    angle_degrees = np.degrees(signed_angle)
+    
+    return angle_degrees
 
 
 def angle_to_vector(angle: float) -> np.ndarray:

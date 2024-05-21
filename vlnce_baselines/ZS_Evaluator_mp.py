@@ -27,6 +27,8 @@ from habitat_baselines.common.baseline_registry import baseline_registry
 
 from vlnce_baselines.utils.map_utils import *
 from vlnce_baselines.map.value_map import ValueMap
+from vlnce_baselines.map.history_map import HistoryMap
+from vlnce_baselines.map.direction_map import DirectionMap
 from vlnce_baselines.utils.data_utils import OrderedSet
 from vlnce_baselines.map.mapping import Semantic_Mapping
 from vlnce_baselines.map.skeleton_map import SkeletonMap
@@ -163,6 +165,8 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         
         self.value_map_module = ValueMap(self.config, self.mapping_module.map_shape, self.device)
         self.skeleton_module = SkeletonMap(self.config)
+        self.history_module = HistoryMap(self.config, self.mapping_module.map_shape)
+        self.direction_module = DirectionMap(self.config, self.mapping_module.map_shape)
         self.policy = FusionMapPolicy(self.config, self.mapping_module.map_shape[0])
         self.policy.reset()
         
@@ -315,6 +319,29 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         
         return base_class
     
+    def _check_destination(self, current_idx: int, sub_constraints: dict, llm_destination: str, decisions: dict) -> str:
+        for idx in range(current_idx, len(sub_constraints)):
+                constraints = sub_constraints[str(idx)]
+                landmarks = decisions[str(idx)]["landmarks"]
+                for constraint in constraints:
+                    if constraint[0] == "direction constraint":
+                        continue
+                    else:
+                        landmark = constraint[1]
+                        for item in landmarks:
+                            print(landmark, item)
+                            if landmark in item:
+                                choice = item[1]
+                            else:
+                                continue
+                            print(choice, choice != "move away")
+                            if choice != "move away":
+                                return constraint[1]
+                            else:
+                                break
+        else:
+            return llm_destination
+    
     def _process_llm_reply(self, obs: Observations):
         def _get_first_destination(sub_constraints: dict, llm_destination: str) -> str:
             for constraints in sub_constraints.values():
@@ -323,6 +350,28 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                         return constraint[1]
             else:
                 return llm_destination
+        
+        # def _get_first_destination(sub_constraints: dict, llm_destination: str, decisions: dict) -> str:
+        #     for key, constraints in sub_constraints.items():
+        #         landmarks = decisions[key]["landmarks"]
+        #         for constraint in constraints:
+        #             if constraint[0] == "direction constraint":
+        #                 continue
+        #             else:
+        #                 landmark = constraint[1]
+        #                 for item in landmarks:
+        #                     print(landmark, item)
+        #                     if landmark in item:
+        #                         choice = item[1]
+        #                     else:
+        #                         continue
+        #                     print(choice, choice != "move away")
+        #                     if choice != "move away":
+        #                         return constraint[1]
+        #                     else:
+        #                         break
+        #     else:
+        #         return llm_destination
         
         # def _get_first_destination(sub_constraints: dict, llm_destination: str) -> str:
         #     for constraints in sub_constraints.values():
@@ -339,10 +388,11 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         self.instruction = obs['instruction']['text']
         self.sub_instructions = self.llm_reply['sub-instructions']
         self.sub_constraints = self.llm_reply['state-constraints']
+        self.decisions = self.llm_reply['decisions']
         self.destination = _get_first_destination(self.sub_constraints, self.llm_reply['destination'])  #最近子指令目标
+        print("!!!!!!!!!!!!!!! first destination: ", self.destination)
         # self.destination = self.sub_instructions[0]
         self.last_destination = self.destination    #上一步子指令目标
-        self.decisions = self.llm_reply['decisions']
         first_landmarks = self.decisions['0']['landmarks']  #TODO 第一个decision没有landmark怎么办？例如turn around
         self.destination_class = [item[0] for item in first_landmarks]
         self.classes = self._process_classes(self.base_classes, self.destination_class)
@@ -510,6 +560,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         self.policy.reset()
         self.mapping_module.reset()
         self.value_map_module.reset()
+        self.history_module.reset()
     
     def rollout(self):
         """
@@ -519,9 +570,13 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         full_pose, obs, dones, infos = self._look_around()
         print("\n ========== START TO NAVIGATE ==========\n")
         
+        trajectory_points = []
+        direction_points = []
         constraint_steps = 0
         collided = 0
         empty_value_map = 0
+        direction_map = np.ones(self.map_shape)
+        direction_map_exist = False
         replan = False
         start_to_wait = False
         search_destination = False
@@ -542,8 +597,18 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             print(f"sub_instr_{current_idx}: {self.sub_instructions[current_idx]}")
             constraint_steps += 1
             position = full_pose[0][:2] * 100 / self.resolution
+            heading = full_pose[0][-1]
+            print("full pose: ", full_pose[0])
             y, x = int(position[0]), int(position[1])
             self.visited[x, y] = 1
+            trajectory_points.append((y, x))
+            direction_points.append(np.array([x, y]))
+            if len(trajectory_points) > 2:
+                del trajectory_points[0]
+            if len(direction_points) > 5:
+                del direction_points[0]
+            
+            history_map = self.history_module(trajectory_points, step, self.current_episode_id)
 
             if "direction constraint" in all_constraint_types and start_check_pose is None:
                 start_check_pose = full_pose[0] # fix last pose the first time try the direction constraint
@@ -557,10 +622,26 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                 print("start to search destination")
                 
             if sum(self.constraints_check) < len(self.sub_instructions):
+                if current_constraint[0][0] == "direction constraint" and not direction_map_exist:
+                    direction = current_constraint[0][1]
+                    if len(direction_points) < 5:
+                        current_position = direction_points[-1]
+                        last_five_position = direction_points[-1]
+                    else:
+                        current_position = direction_points[-1]
+                        last_five_position = direction_points[0]
+                    direction_map = self.direction_module(current_position, last_five_position, heading,
+                                                          direction, step, self.current_episode_id)
+                    direction_map_exist = True
+                else:
+                    direction_map = np.ones(self.map_shape)
+                
                 check = self.constraints_monitor(current_constraint, obs[0], 
                                                 self.current_detections, self.classes, 
                                                 current_pose, start_check_pose)
                 print(current_constraint, check)
+                if current_constraint[0][0] == "direction constraint" and check[0] == True:
+                    direction_map = np.ones(self.map_shape)
                 
                 if len(check) == 0:
                     print("empty constraint")
@@ -602,6 +683,11 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             #     else:
             #         self.destination = new_destination
             
+            # self.destination = self._check_destination(current_idx, 
+            #                                            self.sub_constraints, 
+            #                                            self.llm_reply['destination'], 
+            #                                            self.decisions)
+                
             # process empty constraint and landmark
             if len(current_constraint) > 0 and current_constraint[0][0] != "direction constraint":
                 new_destination = current_constraint[0][1]
@@ -648,7 +734,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             # else:
             #     self.destination = new_destination
             if self.destination != self.last_destination:   #如果上一步的destination到达了，则value map重新置0
-                self.value_map_module.value_map[...] = 0.
+                self.value_map_module.value_map[...] *= 0.5
                 self.last_destination = self.destination
                 # self._look_around()
                 
@@ -730,7 +816,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             print("value map area here: ", np.sum(self.value_map_module.value_map[1].astype(bool)))
             # torch.save(self.value_map_module.value_map[1], 
             #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
-            self._action = self.policy(self.value_map_module.value_map[1], self.collision_map,
+            self._action = self.policy(self.value_map_module.value_map[1] * history_map, self.collision_map,
                                     full_map[0], self.floor, self.traversible, 
                                     full_pose[0], self.frontiers, self.detected_classes,
                                     self.destination_class, self.classes, search_destination, 

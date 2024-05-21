@@ -73,6 +73,7 @@ class ValueMap(nn.Module):
         return np.array([x, y])
 
     def _angle_between_vectors(self, vector1: np.ndarray, vector2: np.ndarray) -> np.ndarray:
+        # return [0, pi]
         dot_product = np.sum(vector1 * vector2, axis=0)
         vector1_length = np.linalg.norm(vector1, axis=0)
         vector2_length = np.linalg.norm(vector2, axis=0)
