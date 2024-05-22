@@ -622,7 +622,9 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                 print("start to search destination")
                 
             if sum(self.constraints_check) < len(self.sub_instructions):
-                if current_constraint[0][0] == "direction constraint" and not direction_map_exist:
+                if (len(current_constraint) > 0 
+                    and current_constraint[0][0] == "direction constraint" 
+                    and not direction_map_exist):
                     direction = current_constraint[0][1]
                     if len(direction_points) < 5:
                         current_position = direction_points[-1]
@@ -640,7 +642,9 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                                                 self.current_detections, self.classes, 
                                                 current_pose, start_check_pose)
                 print(current_constraint, check)
-                if current_constraint[0][0] == "direction constraint" and check[0] == True:
+                if (len(current_constraint) > 0 
+                    and current_constraint[0][0] == "direction constraint" 
+                    and check[0] == True):
                     direction_map = np.ones(self.map_shape)
                 
                 if len(check) == 0:
@@ -816,7 +820,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             print("value map area here: ", np.sum(self.value_map_module.value_map[1].astype(bool)))
             # torch.save(self.value_map_module.value_map[1], 
             #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
-            self._action = self.policy(self.value_map_module.value_map[1] * history_map, self.collision_map,
+            self._action = self.policy(self.value_map_module.value_map[1], self.collision_map,
                                     full_map[0], self.floor, self.traversible, 
                                     full_pose[0], self.frontiers, self.detected_classes,
                                     self.destination_class, self.classes, search_destination, 
