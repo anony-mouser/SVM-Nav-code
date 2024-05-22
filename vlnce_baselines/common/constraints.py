@@ -8,6 +8,7 @@ from habitat import Config
 from collections import Sequence
 from vlnce_baselines.utils.map_utils import *
 from lavis.models import load_model_and_preprocess
+from vlnce_baselines.utils.constant import direction_mapping
 
 
 class ConstraintsMonitor(nn.Module):
@@ -76,7 +77,7 @@ class ConstraintsMonitor(nn.Module):
             return False
         degrees, direction = angle_and_direction(heading_vector, position_vector, self.turn_angle + 1)
         if degrees >= 120:
-            movement = "around"
+            movement = "backward"
         elif degrees == 0 or degrees == 180 or direction == 1:
             movement = "forward"
         else:
@@ -84,7 +85,11 @@ class ConstraintsMonitor(nn.Module):
                 movement = "left"
             elif direction == 3:
                 movement = "right"
-        if object == movement and displacement >= 0.5 * 100 / self.resolution:
+        object_direction = direction_mapping.get(object, "ambiguous direction")
+        if object_direction == "ambiguous direction":
+            print("!Won't check ambiguous direction!")
+            return True
+        elif movement == object_direction and displacement >= 0.5 * 100 / self.resolution:
             return True
         else:
             return False

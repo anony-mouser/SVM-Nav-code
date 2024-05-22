@@ -24,7 +24,7 @@ class HistoryMap(nn.Module):
         color = (255, 255, 255)
         is_closed = False
         
-        # thicness = 20 => 1.0(meter) takes 20 grids in map and the raudis is 0.88m
+        # thicness = 20 => 1.0(meter) takes 20 grids in map
         trajectory = cv2.polylines(image, [points_array], is_closed, color, thickness)
         
         return trajectory.astype(bool)

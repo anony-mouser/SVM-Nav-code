@@ -4,6 +4,7 @@ import numpy as np
 import torch.nn as nn
 from typing import Union, Tuple, List
 from vlnce_baselines.utils.map_utils import *
+from vlnce_baselines.utils.constant import direction_mapping
 
 from habitat import Config
 
@@ -58,16 +59,20 @@ class DirectionMap(nn.Module):
         else:
             heading_angle = angle_between_vectors(np.array([1, 0]), heading_vector)
         print("!!!!heading angle: ", heading_angle, direction, "left" in direction)
-        
-        if "left" in direction:
+        direction = direction_mapping.get(direction, "ambiguous direction")
+        if direction == "forward":
+            sector_mask = self._create_sector_mask(current_position, heading_angle)
+        elif direction == "left":
             heading_angle += 45
             sector_mask = self._create_sector_mask(current_position, heading_angle)
-        elif "right" in direction:
+        elif direction == "right":
             heading_angle -= 45
             sector_mask = self._create_sector_mask(current_position, heading_angle)
-        elif "backward" in direction:
+        elif direction == "backward":
             heading_angle += 180
             sector_mask = self._create_sector_mask(current_position, heading_angle)
+        else:
+            sector_mask = np.ones(self.shape)
         
         if self.visualize:
             self._visualize(sector_mask, step, current_episode_id)

@@ -73,6 +73,7 @@ def run_exp(exp_name: str, exp_config: str,
     pool = Pool(processes=nprocesses)
     pool.map(worker, configs)
     pool.close()
+    pool.join()
     fns = glob.glob(config.CHECKPOINT_FOLDER + '/stats_ep_ckpt_*.json')
     summary = {}
     for fn in fns:

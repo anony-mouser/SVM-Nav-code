@@ -132,3 +132,16 @@ navigable_classes = [
     "floor", "ground",
     "walkway"
 ]
+
+
+direction_mapping = {
+    "forward": "forward",
+    "straight": "forward",
+    "front": "forward",
+    "left": "left",
+    "right": "right",
+    "around": "backward",
+    "round": "backward",
+    "back": "backward",
+    "backward": "backward"
+}
