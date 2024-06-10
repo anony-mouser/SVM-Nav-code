@@ -1,7 +1,7 @@
 export GLOG_minloglevel=2
 export MAGNUM_LOG=quiet
 
-flag=" --exp_name exp_mp_1839_history_map
+flag=" --exp_name exp_mp_1839_max_constraint_value_threshold0.3
       --run-type eval
       --exp-config vlnce_baselines/config/exp1.yaml
       --nprocesses 16

@@ -599,7 +599,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             position = full_pose[0][:2] * 100 / self.resolution
             heading = full_pose[0][-1]
             print("full pose: ", full_pose[0])
-            y, x = int(position[0]), int(position[1])
+            y, x = min(int(position[0]), self.map_shape[0] - 1), min(int(position[1]), self.map_shape[1] - 1)
             self.visited[x, y] = 1
             trajectory_points.append((y, x))
             direction_points.append(np.array([x, y]))
@@ -655,7 +655,8 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
                                           for i in range(len(current_constraint)) 
                                           if not check[i]]
                     all_constraint_types = [item[0] for item in current_constraint]
-                if (sum(check) == len(check) or constraint_steps >= int(250 / len(self.sub_instructions))):
+                # if (sum(check) == len(check) or constraint_steps >= int(250 / len(self.sub_instructions))):
+                if (sum(check) == len(check) or constraint_steps >= self.max_constraint_steps):
                     if not start_to_wait:
                         start_to_wait = True
                         self.constraints_check[current_idx] = True  
@@ -820,7 +821,7 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             print("value map area here: ", np.sum(self.value_map_module.value_map[1].astype(bool)))
             # torch.save(self.value_map_module.value_map[1], 
             #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
-            self._action = self.policy(self.value_map_module.value_map[1], self.collision_map,
+            self._action = self.policy(self.value_map_module.value_map[1] * history_map, self.collision_map,
                                     full_map[0], self.floor, self.traversible, 
                                     full_pose[0], self.frontiers, self.detected_classes,
                                     self.destination_class, self.classes, search_destination, 

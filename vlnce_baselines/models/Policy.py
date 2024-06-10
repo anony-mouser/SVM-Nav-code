@@ -281,9 +281,9 @@ class FusionMapPolicy(nn.Module):
         best_waypoint, best_value, sorted_waypoints = self.superpixel_policy(full_map, traversible, value_map, collision_map,
                                                                              detected_classes, position, self.fmm_dist, replan,
                                                                              step, current_episode_id)
-        print("current_position's value: ", value_map[int(y), int(x)])
+        print("current_position's value: ", value_map[min(int(y), self.map_shape - 1), min(int(x), self.map_shape - 1)])
         print("current pose: ", full_pose)
-        current_value = value_map[int(y), int(x)]
+        current_value = value_map[min(int(y), self.map_shape - 1), min(int(x), self.map_shape - 1)]
         max_value = np.max(value_map)
         if search_destination:
             destination_waypoint, score = self._search_destination(destination, classes, current_value, max_value,
