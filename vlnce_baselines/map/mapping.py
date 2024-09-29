@@ -1,12 +1,3 @@
-r""" 
-We followed the process of constructing semantic map provided by chaplot.
-However, their work doesn't support to build open-vocabulary semantic map.
-We improved this by using dynamic feature map.
-
-REFERENCE:
-https://github.com/devendrachaplot/Object-Goal-Navigation/tree/master
-"""
-
 import os
 import cv2
 import copy
@@ -351,8 +342,6 @@ class Semantic_Mapping(nn.Module):
                             goal=self.goal, 
                             detected_classes=detected_classes,
                             step=step)
-        # torch.save(self.full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/full_maps/full_map%d.pt"%step)
-        # torch.save(self.one_step_full_map, "/data/ckh/Zero-Shot-VLN-FusionMap/tests/one_step_full_maps/full_map%d.pt"%step)
         
         return (self.full_map.cpu().numpy(), 
                 self.full_pose.cpu().numpy(), 

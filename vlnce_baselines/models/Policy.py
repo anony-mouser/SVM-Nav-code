@@ -214,10 +214,6 @@ class FusionMapPolicy(nn.Module):
             if destination_confidence > self.max_destination_confidence:
                 self.max_destination_confidence = destination_confidence
                 
-            # plt.imshow(destination_mask)
-            # plt.savefig("/data/ckh/Zero-Shot-VLN-FusionMap/tests/destination_mask/mask%d.png"%step)
-            # np.save("/data/ckh/Zero-Shot-VLN-FusionMap/tests/destination_mask/mask%d.npy"%step, destination_mask)
-            
             # destination_waypoint = process_destination(destination_map, full_map, detected_classes)
             destination_waypoint = process_destination2(destination_map, floor, traversible)
             if destination_waypoint is not None:

@@ -1,5 +1,3 @@
-# Copyright (c) 2023 Boston Dynamics AI Institute LLC. All rights reserved.
-
 from typing import Any, Set
 
 import numpy as np

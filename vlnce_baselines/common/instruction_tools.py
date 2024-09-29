@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 R2R_VALUNSEEN_PATH = "data/datasets/R2R_VLNCE_v1-3_preprocessed/val_unseen/val_unseen.json.gz"
 DIR_NAME = "data/datasets/LLM_REPLYS_VAL_UNSEEN/"
 FILE_NAME = "llm_reply_valunseen"
-TEMP_SAVE_PATH = '/data/ckh/Zero-Shot-VLN-FusionMap-mp/tests/llm_reply_valunseen_temp.json'
+TEMP_SAVE_PATH = '/data/xxx/Zero-Shot-VLN-FusionMap-mp/tests/llm_reply_valunseen_temp.json'
 dones = 0
 
 # prompt_template = f"""Parse a navigation instruction delimited by triple quotes and your task is to perform the following actions:

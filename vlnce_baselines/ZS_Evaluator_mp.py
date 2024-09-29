@@ -236,8 +236,6 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
         all same class tensors into one tensor, then let the "detected_classes" to 
         record all classes without duplication. Finally we can use each class's index
         in the detected_classes to determine as it's channel in the mask tensor.
-        The organization of mask is similar to chaplot's Sem_Exp, please refer to this link:
-        https://github.com/devendrachaplot/Object-Goal-Navigation/blob/master/agents/utils/semantic_prediction.py#L41
         
         Args:
             masks (np.ndarray): shape:(c,h,w), each instance(even the same class) has one channel
@@ -519,8 +517,6 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             value_map = self.value_map_module(step, full_map[0], self.floor, self.one_step_floor, 
                                               self.collision_map, blip_value, full_pose[0], 
                                   self.detected_classes, self.current_episode_id)
-            # torch.save(self.value_map_module.value_map[1], 
-            #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
         self._action = self.policy(self.value_map_module.value_map[1], self.collision_map,
                                     full_map[0], self.floor, self.traversible, 
                                     full_pose[0], self.frontiers, self.detected_classes,
@@ -819,8 +815,6 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
             value_map = self.value_map_module(step, full_map[0], self.floor, self.one_step_floor, self.collision_map, 
                                   blip_value, full_pose[0], self.detected_classes, self.current_episode_id)
             print("value map area here: ", np.sum(self.value_map_module.value_map[1].astype(bool)))
-            # torch.save(self.value_map_module.value_map[1], 
-            #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
             self._action = self.policy(self.value_map_module.value_map[1] * history_map, self.collision_map,
                                     full_map[0], self.floor, self.traversible, 
                                     full_pose[0], self.frontiers, self.detected_classes,
@@ -975,8 +969,6 @@ class ZeroShotVlnEvaluatorMP(BaseTrainer):
     #         blip_value = blip_value.detach().cpu().numpy()
     #         value_map = self.value_map_module(step, full_map[0], self.floor, self.collision_map, 
     #                               blip_value, full_pose[0], self.detected_classes, self.current_episode_id)
-    #         # torch.save(self.value_map_module.value_map[1], 
-    #         #            "/data/ckh/Zero-Shot-VLN-FusionMap/tests/value_maps/value_map%d.pt"%step)
     #         self._action = self.policy(self.value_map_module.value_map[1], self.collision_map,
     #                                 full_map[0], self.floor, self.traversible, 
     #                                 full_pose[0], self.frontiers, self.detected_classes,
